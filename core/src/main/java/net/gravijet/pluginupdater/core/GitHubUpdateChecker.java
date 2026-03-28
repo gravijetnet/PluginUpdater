@@ -69,7 +69,8 @@ public class GitHubUpdateChecker {
                 return Optional.empty();
             }
 
-            JsonObject release = JsonParser.parseString(readBody(conn)).getAsJsonObject();
+            @SuppressWarnings("deprecation")
+            JsonObject release = new JsonParser().parse(readBody(conn)).getAsJsonObject();
 
             // GitHub returns {"message":"..."} for errors even on 200 (e.g. no releases)
             if (release.has("message")) {
