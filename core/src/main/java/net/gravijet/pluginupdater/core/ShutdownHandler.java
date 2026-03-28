@@ -265,9 +265,23 @@ public class ShutdownHandler {
 
         if (tempFile == null) return; // download failed, already logged
 
+        Optional<Path> oldJar = findExistingJar(entry);
         Path targetJar = resolveTargetJar(entry, update.getNewVersion());
 
         if (fileUpdater.atomicReplace(tempFile, targetJar)) {
+            // Remove old JAR if it had a different name (e.g. old version in filename)
+            oldJar.ifPresent(old -> {
+                if (!old.equals(targetJar)) {
+                    try {
+                        Files.deleteIfExists(old);
+                    } catch (IOException e) {
+                        logger.warning(CC.c("&c[PluginUpdater] &7Could not remove old JAR &f"
+                            + old.getFileName() + "&7: " + e.getMessage()));
+                        old.toFile().deleteOnExit();
+                    }
+                }
+            });
+
             versions.setVersion(entry.getName(), update.getStoreKey());
 
             if (allowActivation && pluginActivator != null) {
@@ -314,33 +328,19 @@ public class ShutdownHandler {
     }
 
     /**
-     * Resolves the path of the JAR file to replace.
+     * Resolves the desired target path for the updated JAR.
      *
-     * <p>Priority:
-     * <ol>
-     *   <li>Pre-registered known path (e.g. the updater's own JAR).
-     *   <li>First JAR in the plugins folder whose filename starts with the plugin name.
-     *   <li>Fallback: {@code <plugins>/<Name>-<version>.jar}
-     * </ol>
+     * <p>For pre-registered JARs (e.g. the updater itself) the known path is returned
+     * unchanged.  For all other plugins the target is always
+     * {@code <plugins>/<ConfigName>-<version>.jar} so that the filename stays in sync
+     * with the configured name and current version.
      */
     private Path resolveTargetJar(PluginEntry entry, String newVersion) {
-        // 1. Known path
+        // Known path (e.g. the updater's own JAR) — keep as-is
         Path known = knownJarPaths.get(entry.getName());
         if (known != null) return known;
 
-        // 2. Scan plugins folder
-        String nameLower = entry.getName().toLowerCase();
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(pluginsFolder, "*.jar")) {
-            for (Path jar : stream) {
-                if (jar.getFileName().toString().toLowerCase().startsWith(nameLower)) {
-                    return jar;
-                }
-            }
-        } catch (IOException e) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Plugins folder scan failed: " + e.getMessage()));
-        }
-
-        // 3. Fallback — new file with version in name
+        // Always use <ConfigName>-<version>.jar so the filename matches the config
         return pluginsFolder.resolve(entry.getName() + "-" + newVersion + ".jar");
     }
 }
