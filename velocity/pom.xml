@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>net.gravijet.pluginupdater</groupId>
+        <artifactId>PluginUpdater</artifactId>
+        <version>1.0.0</version>
+    </parent>
+
+    <artifactId>velocity</artifactId>
+    <packaging>jar</packaging>
+
+    <dependencies>
+        <!-- Core shared logic (will be shaded into this JAR) -->
+        <dependency>
+            <groupId>net.gravijet.pluginupdater</groupId>
+            <artifactId>core</artifactId>
+            <version>${project.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <!-- Velocity API (provided by the proxy at runtime) -->
+        <dependency>
+            <groupId>com.velocitypowered</groupId>
+            <artifactId>velocity-api</artifactId>
+            <version>${velocity.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <!--
+            Velocity does NOT bundle Gson or SnakeYAML, so we compile and
+            shade them in, relocating to avoid conflicts with any proxy internals.
+        -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>2.10.1</version>
+            <scope>compile</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.yaml</groupId>
+            <artifactId>snakeyaml</artifactId>
+            <version>2.2</version>
+            <scope>compile</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- Enable the Velocity @Plugin annotation processor -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>com.velocitypowered</groupId>
+                            <artifactId>velocity-api</artifactId>
+                            <version>${velocity.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                    <!-- Required for Velocity's Guice DI to resolve parameter names -->
+                    <compilerArgs>
+                        <arg>-parameters</arg>
+                    </compilerArgs>
+                </configuration>
+            </plugin>
+
+            <!-- Shade core + Gson + SnakeYAML into a fat JAR with relocation -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <includes>
+                                    <include>net.gravijet.pluginupdater:core</include>
+                                    <include>com.google.code.gson:gson</include>
+                                    <include>org.yaml:snakeyaml</include>
+                                </includes>
+                            </artifactSet>
+                            <!-- Relocate shaded libs to avoid conflicts with proxy internals -->
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.google.gson</pattern>
+                                    <shadedPattern>net.gravijet.pluginupdater.shaded.gson</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.yaml.snakeyaml</pattern>
+                                    <shadedPattern>net.gravijet.pluginupdater.shaded.snakeyaml</shadedPattern>
+                                </relocation>
+                            </relocations>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>
