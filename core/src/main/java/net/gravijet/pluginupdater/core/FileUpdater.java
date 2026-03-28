@@ -49,7 +49,8 @@ public class FileUpdater {
             int status = conn.getResponseCode();
             if (status != 200) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
-                    + " &7failed with HTTP &e" + status + "&7."));
+                    + " &7failed with HTTP &e" + status
+                    + " &8(&7url: &f" + conn.getURL() + "&8)&7."));
                 return null;
             }
 
@@ -133,6 +134,8 @@ public class FileUpdater {
         HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
         conn.setRequestMethod("GET");
         conn.setRequestProperty("User-Agent", "PluginUpdater/1.0");
+        // Tell GitHub to return the raw binary rather than JSON asset metadata
+        conn.setRequestProperty("Accept", "application/octet-stream");
         conn.setConnectTimeout(10_000);
         conn.setReadTimeout(60_000);
         conn.setInstanceFollowRedirects(false); // we handle redirects ourselves

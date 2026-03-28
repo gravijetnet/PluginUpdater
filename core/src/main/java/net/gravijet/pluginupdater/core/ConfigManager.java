@@ -31,6 +31,10 @@ public class ConfigManager {
         "# Leave empty (\"\") for public repos (no Authorization header sent).\n" +
         "github-access-token: \"\"\n" +
         "\n" +
+        "# How often (in minutes) to check for updates while the server is running.\n" +
+        "# Set to 0 to disable periodic checks (updates only on startup/shutdown).\n" +
+        "check-interval-minutes: 30\n" +
+        "\n" +
         "plugins:\n" +
         "  # Each entry needs: name, repo (owner/repo), asset-pattern (glob).\n" +
         "  # Optionally add access-token to override the global token for that repo.\n" +
@@ -51,6 +55,7 @@ public class ConfigManager {
     private final Logger logger;
 
     private String globalToken = "";
+    private int checkIntervalMinutes = 30;
     private final List<PluginEntry> plugins = new ArrayList<>();
 
     public ConfigManager(Path dataFolder, Logger logger) {
@@ -86,6 +91,16 @@ public class ConfigManager {
         Object tok = data.get("github-access-token");
         globalToken = tok != null ? tok.toString().trim() : "";
 
+        // Check interval
+        Object interval = data.get("check-interval-minutes");
+        if (interval != null) {
+            try {
+                checkIntervalMinutes = Math.max(0, Integer.parseInt(interval.toString().trim()));
+            } catch (NumberFormatException e) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Invalid check-interval-minutes — using default (30)."));
+            }
+        }
+
         // Plugin list
         List<Map<String, Object>> list = (List<Map<String, Object>>) data.get("plugins");
         if (list == null || list.isEmpty()) {
@@ -113,8 +128,10 @@ public class ConfigManager {
         }
     }
 
-    public List<PluginEntry> getPlugins()  { return Collections.unmodifiableList(plugins); }
-    public String            getGlobalToken() { return globalToken; }
+    public List<PluginEntry> getPlugins()           { return Collections.unmodifiableList(plugins); }
+    public String            getGlobalToken()        { return globalToken; }
+    /** Returns the periodic check interval in minutes, or 0 if disabled. */
+    public int               getCheckIntervalMinutes() { return checkIntervalMinutes; }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 

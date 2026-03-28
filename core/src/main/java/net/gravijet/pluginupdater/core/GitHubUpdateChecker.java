@@ -22,6 +22,11 @@ import java.util.logging.Logger;
  * for a given {@link PluginEntry}.
  *
  * <p>Only {@code java.net.HttpURLConnection} is used — no external HTTP libraries.
+ *
+ * <h2>Change detection</h2>
+ * <p>Instead of comparing tag names (which stays {@code "latest"} for rolling-tag repos),
+ * the asset's {@code updated_at} timestamp is compared against the value stored in
+ * {@code versions.yml}.  This correctly detects re-uploads under the same tag.
  */
 public class GitHubUpdateChecker {
 
@@ -39,15 +44,15 @@ public class GitHubUpdateChecker {
      * Checks GitHub for a newer release of the plugin described by {@code entry}.
      *
      * <ul>
-     *   <li>If {@code currentVersion} is {@code null} (first run) the latest release is
-     *       returned so the caller can initialise the version store.
-     *   <li>If the latest {@code tag_name} equals {@code currentVersion} the plugin is
-     *       up to date and {@link Optional#empty()} is returned.
+     *   <li>{@code storedKey} is the asset's {@code updated_at} timestamp previously saved
+     *       in {@code versions.yml}, or {@code null} on first run.
+     *   <li>If the latest matching asset's {@code updated_at} equals {@code storedKey}
+     *       the plugin is up to date and {@link Optional#empty()} is returned.
      *   <li>On any network or parse error a warning is logged and empty is returned —
      *       the server will never crash due to a failed update check.
      * </ul>
      */
-    public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String currentVersion) {
+    public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
         String apiUrl = API_BASE + entry.getRepo() + "/releases/latest";
         try {
             HttpURLConnection conn = openConnection(apiUrl, entry.getAccessToken());
@@ -75,32 +80,37 @@ public class GitHubUpdateChecker {
 
             String latestTag = release.get("tag_name").getAsString();
 
-            // Already on this version — nothing to do
-            if (latestTag.equals(currentVersion)) {
-                logger.info(CC.c("&e[PluginUpdater] &f" + entry.getName()
-                    + " &7is up to date &8(&f" + currentVersion + "&8)."));
-                return Optional.empty();
-            }
-
             // Find the release asset whose filename matches the configured glob
             JsonArray assets = release.getAsJsonArray("assets");
             for (int i = 0; i < assets.size(); i++) {
                 JsonObject asset = assets.get(i).getAsJsonObject();
                 String assetName = asset.get("name").getAsString();
 
-                if (GlobMatcher.matches(entry.getAssetPattern(), assetName)) {
-                    String downloadUrl = asset.get("browser_download_url").getAsString();
+                if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) continue;
 
-                    if (currentVersion != null) {
-                        logger.info(CC.c("&a[PluginUpdater] &7Update available for &f" + entry.getName()
-                            + "&7: &c" + currentVersion + " &7\u00bb &a" + latestTag));
-                    } else {
-                        logger.info(CC.c("&e[PluginUpdater] &7Initialising &f" + entry.getName()
-                            + " &7to &e" + latestTag + "&7."));
-                    }
+                long   assetId       = asset.get("id").getAsLong();
+                // Use the API asset endpoint — more reliable than browser_download_url for both
+                // public and private repos; auth header is forwarded only on the initial request.
+                String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
+                // updated_at changes whenever the asset is re-uploaded, even under the same tag.
+                String assetUpdatedAt = asset.get("updated_at").getAsString();
 
-                    return Optional.of(new UpdateInfo(entry.getName(), currentVersion, latestTag, downloadUrl));
+                if (assetUpdatedAt.equals(storedKey)) {
+                    logger.info(CC.c("&e[PluginUpdater] &f" + entry.getName()
+                        + " &7is up to date &8(&ftag: " + latestTag + "&8)."));
+                    return Optional.empty();
                 }
+
+                if (storedKey != null) {
+                    logger.info(CC.c("&a[PluginUpdater] &7Update available for &f" + entry.getName()
+                        + "&7: tag &f" + latestTag + " &7(asset updated &f" + assetUpdatedAt + "&7)"));
+                } else {
+                    logger.info(CC.c("&e[PluginUpdater] &7Initialising &f" + entry.getName()
+                        + " &7at tag &e" + latestTag + "&7."));
+                }
+
+                return Optional.of(new UpdateInfo(
+                    entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
             }
 
             // No asset matched the configured glob

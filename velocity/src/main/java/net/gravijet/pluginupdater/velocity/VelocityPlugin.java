@@ -94,7 +94,11 @@ public class VelocityPlugin {
         }
 
         shutdownHandler.registerShutdownHook();
-        slf4j.info("[PluginUpdater] Enabled \u00bb updates will apply on next shutdown.");
+
+        // Check and download updates immediately in the background.
+        shutdownHandler.onEnable();
+
+        slf4j.info("[PluginUpdater] Enabled \u00bb checking for updates in the background.");
     }
 
     @Subscribe
