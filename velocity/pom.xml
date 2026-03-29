@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <dependencies>
-        <!-- Core shared logic (will be shaded into this JAR) -->
+        <!-- Core shared logic -->
         <dependency>
             <groupId>net.gravijet.pluginupdater</groupId>
             <artifactId>core</artifactId>
@@ -23,7 +23,7 @@
             <scope>compile</scope>
         </dependency>
 
-        <!-- Velocity API (provided by the proxy at runtime) -->
+        <!-- Velocity API -->
         <dependency>
             <groupId>com.velocitypowered</groupId>
             <artifactId>velocity-api</artifactId>
@@ -31,10 +31,7 @@
             <scope>provided</scope>
         </dependency>
 
-        <!--
-            Velocity does NOT bundle Gson or SnakeYAML, so we compile and
-            shade them in, relocating to avoid conflicts with any proxy internals.
-        -->
+        <!-- Shaded dependencies -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
@@ -51,7 +48,7 @@
 
     <build>
         <plugins>
-            <!-- Enable the Velocity @Plugin annotation processor -->
+            <!-- Velocity annotation processor -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
@@ -63,7 +60,6 @@
                             <version>${velocity.version}</version>
                         </path>
                     </annotationProcessorPaths>
-                    <!-- Required for Velocity's Guice DI to resolve parameter names -->
                     <compilerArgs>
                         <arg>-parameters</arg>
                     </compilerArgs>
@@ -85,15 +81,15 @@
                             <file>${project.build.outputDirectory}/velocity-plugin.json</file>
                             <replacements>
                                 <replacement>
-                                    <token>${project.version}</token>
+                                    <token>@project.version@</token>
                                     <value>${project.version}</value>
                                 </replacement>
                                 <replacement>
-                                    <token>${github.build_number}</token>
+                                    <token>@github.build_number@</token>
                                     <value>${github.build_number}</value>
                                 </replacement>
                                 <replacement>
-                                    <token>${github.short_commit}</token>
+                                    <token>@github.short_commit@</token>
                                     <value>${github.short_commit}</value>
                                 </replacement>
                             </replacements>
@@ -102,7 +98,7 @@
                 </executions>
             </plugin>
 
-            <!-- Shade core + Gson + SnakeYAML into a fat JAR with relocation -->
+            <!-- Shade dependencies -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -119,7 +115,6 @@
                                     <include>org.yaml:snakeyaml</include>
                                 </includes>
                             </artifactSet>
-                            <!-- Relocate shaded libs to avoid conflicts with proxy internals -->
                             <relocations>
                                 <relocation>
                                     <pattern>com.google.gson</pattern>
@@ -147,5 +142,4 @@
             </plugin>
         </plugins>
     </build>
-
 </project>

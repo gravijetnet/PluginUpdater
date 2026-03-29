@@ -23,12 +23,7 @@
             <scope>compile</scope>
         </dependency>
 
-        <!--
-            Spigot API 1.8.8 — used for compilation only (provided at runtime by the server).
-            We only use standard Bukkit/Spigot APIs (JavaPlugin, getFile(), etc.) so this
-            is fully compatible with custom Paper 1.8.8 forks at runtime.
-            Hosted on SpigotMC Nexus (publicly available, works in GitHub Actions).
-        -->
+        <!-- Spigot API 1.8.8 -->
         <dependency>
             <groupId>org.spigotmc</groupId>
             <artifactId>spigot-api</artifactId>
@@ -36,11 +31,7 @@
             <scope>provided</scope>
         </dependency>
 
-        <!--
-            Paper already bundles Gson and SnakeYAML.
-            Declare them as "provided" so the compiler can resolve core's
-            transitive references without shading duplicates into the fat JAR.
-        -->
+        <!-- Paper already bundles Gson and SnakeYAML -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
@@ -59,10 +50,35 @@
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
-                <filtering>true</filtering>
+                <filtering>false</filtering> <!-- Disable default filtering -->
             </resource>
         </resources>
         <plugins>
+            <!-- Explicitly copy and filter resources -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.3.1</version>
+                <executions>
+                    <execution>
+                        <phase>process-resources</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.outputDirectory}</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>src/main/resources</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Shade core module -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
@@ -72,7 +88,6 @@
                         <goals><goal>shade</goal></goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <!-- Only shade the core module; Paper provides Gson + SnakeYAML -->
                             <artifactSet>
                                 <includes>
                                     <include>net.gravijet.pluginupdater:core</include>

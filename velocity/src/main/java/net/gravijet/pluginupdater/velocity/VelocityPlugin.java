@@ -24,20 +24,10 @@ import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 
-/**
- * Velocity entry point for PluginUpdater.
- *
- * <p>Velocity uses SLF4J for logging while the core module uses {@link java.util.logging}.
- * A lightweight JUL → SLF4J bridge is created inline so the core can log through
- * Velocity's console without pulling in the full slf4j-jul bridge artifact.
- *
- * <p>Color codes ({@code §x}) are stripped from log messages before they reach SLF4J
- * because Velocity's console does not render Minecraft color codes.
- */
 @Plugin(
     id          = "pluginupdater",
     name        = "PluginUpdater",
-    version     = "${project.version}-b${github.build_number}.${github.short_commit}",
+    version     = "@project.version@user@example.invalid_number@user@example.invalid_commit@",
     description = "Automatically updates plugins from GitHub releases on proxy shutdown.",
     authors     = {"gravijet"}
 )
@@ -47,10 +37,7 @@ public class VelocityPlugin {
     private final Logger          slf4j;
     private final Path            dataDirectory;
     private final PluginContainer pluginContainer;
-
-    /** java.util.logging adapter handed to the core module. */
     private final java.util.logging.Logger coreLogger;
-
     private ShutdownHandler shutdownHandler;
 
     @Inject
@@ -63,15 +50,11 @@ public class VelocityPlugin {
         this.coreLogger    = buildJulBridge(logger);
     }
 
-    // ── Velocity lifecycle ─────────────────────────────────────────────────
-
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
         String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
         slf4j.info("[PluginUpdater] Starting version {}", version);
 
-        // dataDirectory = <proxy-root>/plugins/pluginupdater/
-        // pluginsDir    = <proxy-root>/plugins/
         Path pluginsDir = dataDirectory.getParent();
 
         ConfigManager       configManager = new ConfigManager(dataDirectory, coreLogger);
@@ -84,13 +67,12 @@ public class VelocityPlugin {
             versionStore.load();
         } catch (IOException e) {
             slf4j.error("[PluginUpdater] Failed to load configuration: {}", e.getMessage());
-            return; // do not register the hook if config is broken
+            return;
         }
 
         shutdownHandler = new ShutdownHandler(
             configManager, versionStore, checker, fileUpdater, pluginsDir, coreLogger);
 
-        // Attempt to register this plugin's own JAR for clean self-updates.
         try {
             Path selfJar = pluginContainer.getDescription().getSource()
                 .orElseThrow(() -> new IllegalStateException("Could not get plugin JAR path"))
@@ -101,7 +83,6 @@ public class VelocityPlugin {
             slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.getMessage());
         }
 
-        // Register command
         CommandManager commandManager = server.getCommandManager();
         CommandMeta meta = commandManager.metaBuilder("pluginupdater")
             .aliases("pu")
@@ -110,8 +91,6 @@ public class VelocityPlugin {
         commandManager.register(meta, new VelocityUpdateCommand(pluginContainer.getDescription()));
 
         shutdownHandler.registerShutdownHook();
-
-        // Check and download updates immediately in the background.
         shutdownHandler.onEnable();
 
         slf4j.info("[PluginUpdater] Enabled \u00bb checking for updates in the background.");
@@ -120,18 +99,10 @@ public class VelocityPlugin {
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
         if (shutdownHandler != null) {
-            // Handles clean proxy shutdowns.
-            // The JVM shutdown hook handles forced kills.
             shutdownHandler.onDisable();
         }
     }
 
-    // ── JUL → SLF4J bridge ────────────────────────────────────────────────
-
-    /**
-     * Builds a {@link java.util.logging.Logger} that forwards records to the given
-     * SLF4J logger, stripping Minecraft color codes in the process.
-     */
     private static java.util.logging.Logger buildJulBridge(Logger slf4j) {
         java.util.logging.Logger jul = java.util.logging.Logger.getLogger("PluginUpdater");
         jul.setUseParentHandlers(false);
@@ -140,7 +111,7 @@ public class VelocityPlugin {
             @Override
             public void publish(LogRecord record) {
                 if (record == null || !isLoggable(record)) return;
-                String msg = CC.strip(record.getMessage()); // strip §x color codes
+                String msg = CC.strip(record.getMessage());
                 Level lvl  = record.getLevel();
 
                 if (lvl.intValue() >= Level.SEVERE.intValue()) {
