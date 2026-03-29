@@ -92,7 +92,7 @@ public class VelocityPlugin {
 
         // Attempt to register this plugin's own JAR for clean self-updates.
         try {
-            Path selfJar = pluginContainer.getSource()
+            Path selfJar = pluginContainer.getDescription().getSource()
                 .orElseThrow(() -> new IllegalStateException("Could not get plugin JAR path"))
                 .toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
