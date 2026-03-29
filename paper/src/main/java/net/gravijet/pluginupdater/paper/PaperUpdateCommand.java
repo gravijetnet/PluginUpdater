@@ -16,7 +16,7 @@ public class PaperUpdateCommand implements CommandExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
-        // The full version string is like "1.0.0-b123.abcdefg"
+        // The full version string is like "1.0.123-b456.abcdefg"
         String fullVersion = description.getVersion();
         
         String[] parts = fullVersion.split("-b");

@@ -6,7 +6,7 @@
 
     <groupId>net.gravijet.pluginupdater</groupId>
     <artifactId>PluginUpdater</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.${commit.count}</version>
     <packaging>pom</packaging>
 
     <modules>
@@ -20,7 +20,8 @@
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <velocity.version>3.3.0-SNAPSHOT</velocity.version>
-        <!-- Default properties for local builds, overridden by GitHub Actions -->
+        <!-- Default to 0 for local builds where the git property is not present -->
+        <commit.count>0</commit.count>
         <github.build_number>local</github.build_number>
         <github.short_commit>dev</github.short_commit>
     </properties>
