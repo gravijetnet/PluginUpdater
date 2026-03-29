@@ -4,6 +4,7 @@ import com.velocitypowered.api.command.SimpleCommand;
 import com.velocitypowered.api.plugin.PluginDescription;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
 
 public class VelocityUpdateCommand implements SimpleCommand {
 
@@ -15,16 +16,24 @@ public class VelocityUpdateCommand implements SimpleCommand {
 
     @Override
     public void execute(Invocation invocation) {
-        String version = description.getVersion().orElse("Unknown");
-        String name = description.getName().orElse("PluginUpdater");
+        String fullVersion = description.getVersion().orElse("1.0.0-blocal.dev");
 
-        invocation.source().sendMessage(
-            Component.text(name + " » ", NamedTextColor.RED)
-                .append(Component.text(name + " " + version, NamedTextColor.WHITE))
-        );
-        invocation.source().sendMessage(
-            Component.text("Version: ", NamedTextColor.RED)
-                .append(Component.text(version, NamedTextColor.WHITE))
-        );
+        String[] parts = fullVersion.split("-b");
+        String version = parts[0];
+        String buildInfo = (parts.length > 1) ? parts[1] : "local";
+
+        String buildNumber = "local";
+        String commit = "dev";
+
+        if (!buildInfo.equals("local")) {
+            String[] buildParts = buildInfo.split("\\.");
+            buildNumber = buildParts[0];
+            commit = (buildParts.length > 1) ? buildParts[1] : "unknown";
+        }
+
+        invocation.source().sendMessage(LegacyComponentSerializer.legacyAmpersand().deserialize("&c&lPluginUpdater &7» &fVersion Information"));
+        invocation.source().sendMessage(LegacyComponentSerializer.legacyAmpersand().deserialize("&cVersion&8: &f" + version));
+        invocation.source().sendMessage(LegacyComponentSerializer.legacyAmpersand().deserialize("&cBuild&8:   &f#" + buildNumber));
+        invocation.source().sendMessage(LegacyComponentSerializer.legacyAmpersand().deserialize("&cCommit&8:  &f" + commit));
     }
 }
