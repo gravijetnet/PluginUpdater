@@ -7,7 +7,8 @@
     <parent>
         <groupId>net.gravijet.pluginupdater</groupId>
         <artifactId>PluginUpdater</artifactId>
-        <version>1.0.0</version>
+        <version>1.0.${commit.count}</version>
+        <relativePath>../</relativePath>
     </parent>
 
     <artifactId>core</artifactId>
