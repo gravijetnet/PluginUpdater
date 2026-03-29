@@ -50,12 +50,6 @@
     </dependencies>
 
     <build>
-        <resources>
-            <resource>
-                <directory>src/main/resources</directory>
-                <filtering>true</filtering>
-            </resource>
-        </resources>
         <plugins>
             <!-- Enable the Velocity @Plugin annotation processor -->
             <plugin>
@@ -74,6 +68,38 @@
                         <arg>-parameters</arg>
                     </compilerArgs>
                 </configuration>
+            </plugin>
+
+            <!-- Replace placeholders in the generated velocity-plugin.json -->
+            <plugin>
+                <groupId>com.google.code.maven-replacer-plugin</groupId>
+                <artifactId>replacer</artifactId>
+                <version>1.5.3</version>
+                <executions>
+                    <execution>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>replace</goal>
+                        </goals>
+                        <configuration>
+                            <file>${project.build.outputDirectory}/velocity-plugin.json</file>
+                            <replacements>
+                                <replacement>
+                                    <token>${project.version}</token>
+                                    <value>${project.version}</value>
+                                </replacement>
+                                <replacement>
+                                    <token>${github.build_number}</token>
+                                    <value>${github.build_number}</value>
+                                </replacement>
+                                <replacement>
+                                    <token>${github.short_commit}</token>
+                                    <value>${github.short_commit}</value>
+                                </replacement>
+                            </replacements>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- Shade core + Gson + SnakeYAML into a fat JAR with relocation -->
