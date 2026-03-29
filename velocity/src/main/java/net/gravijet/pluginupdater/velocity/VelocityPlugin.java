@@ -1,10 +1,13 @@
 package net.gravijet.pluginupdater.velocity;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.command.CommandManager;
+import com.velocitypowered.api.command.CommandMeta;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyShutdownEvent;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.plugin.PluginContainer;
 import com.velocitypowered.api.plugin.annotation.DataDirectory;
 import com.velocitypowered.api.proxy.ProxyServer;
 import net.gravijet.pluginupdater.core.ConfigManager;
@@ -34,15 +37,16 @@ import java.util.logging.LogRecord;
 @Plugin(
     id          = "pluginupdater",
     name        = "PluginUpdater",
-    version     = "1.0.0",
+    version     = "${project.version}-b${github.build_number}.${github.short_commit}",
     description = "Automatically updates plugins from GitHub releases on proxy shutdown.",
     authors     = {"gravijet"}
 )
 public class VelocityPlugin {
 
-    private final ProxyServer server;
-    private final Logger      slf4j;
-    private final Path        dataDirectory;
+    private final ProxyServer     server;
+    private final Logger          slf4j;
+    private final Path            dataDirectory;
+    private final PluginContainer pluginContainer;
 
     /** java.util.logging adapter handed to the core module. */
     private final java.util.logging.Logger coreLogger;
@@ -51,10 +55,11 @@ public class VelocityPlugin {
 
     @Inject
     public VelocityPlugin(ProxyServer server, Logger logger,
-                          @DataDirectory Path dataDirectory) {
+                          @DataDirectory Path dataDirectory, PluginContainer pluginContainer) {
         this.server        = server;
         this.slf4j         = logger;
         this.dataDirectory = dataDirectory;
+        this.pluginContainer = pluginContainer;
         this.coreLogger    = buildJulBridge(logger);
     }
 
@@ -62,6 +67,9 @@ public class VelocityPlugin {
 
     @Subscribe
     public void onProxyInitialize(ProxyInitializeEvent event) {
+        String version = pluginContainer.getDescription().getVersion().orElse("Unknown");
+        slf4j.info("[PluginUpdater] Starting version {}", version);
+
         // dataDirectory = <proxy-root>/plugins/pluginupdater/
         // pluginsDir    = <proxy-root>/plugins/
         Path pluginsDir = dataDirectory.getParent();
@@ -84,14 +92,22 @@ public class VelocityPlugin {
 
         // Attempt to register this plugin's own JAR for clean self-updates.
         try {
-            Path selfJar = Path.of(
-                VelocityPlugin.class.getProtectionDomain().getCodeSource().getLocation().toURI()
-            ).toAbsolutePath();
+            Path selfJar = pluginContainer.getSource()
+                .orElseThrow(() -> new IllegalStateException("Could not get plugin JAR path"))
+                .toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             slf4j.info("[PluginUpdater] Self-JAR: {}", selfJar.getFileName());
         } catch (Exception e) {
             slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.getMessage());
         }
+
+        // Register command
+        CommandManager commandManager = server.getCommandManager();
+        CommandMeta meta = commandManager.metaBuilder("pluginupdater")
+            .aliases("pu")
+            .plugin(this)
+            .build();
+        commandManager.register(meta, new VelocityUpdateCommand(pluginContainer.getDescription()));
 
         shutdownHandler.registerShutdownHook();
 

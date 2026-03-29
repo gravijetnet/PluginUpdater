@@ -1,5 +1,9 @@
 name: PluginUpdater
-version: 1.0.0
+version: '${project.version}-b${github.build_number}.${github.short_commit}'
 main: net.gravijet.pluginupdater.paper.PaperPlugin
 description: Automatically updates plugins from GitHub releases on server shutdown.
 author: gravijet
+commands:
+  pluginupdater:
+    description: Shows the version of PluginUpdater.
+    usage: /<command>

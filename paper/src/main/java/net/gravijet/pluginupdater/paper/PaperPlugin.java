@@ -32,6 +32,8 @@ public class PaperPlugin extends JavaPlugin {
     @Override
     public void onEnable() {
         Logger log = getLogger();
+        String version = getDescription().getVersion();
+        log.info(CC.c("&e[PluginUpdater] &7Starting version &f" + version));
 
         // Data folder: plugins/PluginUpdater/
         Path dataDir    = getDataFolder().toPath();
@@ -71,6 +73,9 @@ public class PaperPlugin extends JavaPlugin {
         shutdownHandler.setPluginActivator(buildActivator(log));
 
         shutdownHandler.registerShutdownHook();
+
+        // Register command
+        getCommand("pluginupdater").setExecutor(new PaperUpdateCommand(getDescription()));
 
         // Check and download updates immediately in the background.
         shutdownHandler.onEnable();

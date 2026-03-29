@@ -24,8 +24,19 @@ jobs:
           distribution: 'temurin'
           cache: maven
 
+      - name: Get Version Info
+        id: version_info
+        run: |
+          echo "short_commit=$(git rev-parse --short=7 HEAD)" >> $GITHUB_OUTPUT
+          echo "commit_count=$(git rev-list --count HEAD)" >> $GITHUB_OUTPUT
+
       - name: Build with Maven
-        run: mvn -B package --file pom.xml
+        run: >
+          mvn -B package
+          -Dcommit.count=${{ steps.version_info.outputs.commit_count }}
+          -Dgithub.build_number=${{ github.run_number }}
+          -Dgithub.short_commit=${{ steps.version_info.outputs.short_commit }}
+          --file pom.xml
 
       - name: Collect JARs
         run: |
