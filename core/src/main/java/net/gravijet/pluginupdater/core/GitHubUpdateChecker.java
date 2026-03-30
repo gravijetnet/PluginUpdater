@@ -54,7 +54,7 @@ public class GitHubUpdateChecker {
      */
     public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
         // Determine which release to fetch: if asset pattern contains "latest", try the "latest" tag first
-        boolean tryLatestTag = entry.getAssetPattern().toLowerCase().contains("latest");
+        boolean tryLatestTag = true; // always try latest tag
         JsonObject release = null;
         String usedTag = null;
 
@@ -85,11 +85,11 @@ public class GitHubUpdateChecker {
             }
         }
 
-        // If we haven't obtained a release yet, fetch the latest release
+        // If we haven't obtained a release yet, fetch the list of releases and pick the newest
         if (release == null) {
-            String apiUrl = API_BASE + entry.getRepo() + "/releases/latest";
+            String listUrl = API_BASE + entry.getRepo() + "/releases?per_page=100&page=1";
             try {
-                HttpURLConnection conn = openConnection(apiUrl, entry.getAccessToken());
+                HttpURLConnection conn = openConnection(listUrl, entry.getAccessToken());
                 int status = conn.getResponseCode();
 
                 if (status == 404) {
@@ -104,16 +104,30 @@ public class GitHubUpdateChecker {
                 }
 
                 @SuppressWarnings("deprecation")
-                JsonObject potential = new JsonParser().parse(readBody(conn)).getAsJsonObject();
+                JsonArray releases = new JsonParser().parse(readBody(conn)).getAsJsonArray();
 
-                // GitHub returns {"message":"..."} for errors even on 200 (e.g. no releases)
-                if (potential.has("message")) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7GitHub error for &f" + entry.getName()
-                        + "&7: " + potential.get("message").getAsString()));
+                if (releases.size() == 0) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7No releases found for &f" + entry.getName()
+                        + "&7."));
                     return Optional.empty();
                 }
-                release = potential;
-                usedTag = release.get("tag_name").getAsString();
+
+                // Search for a release with tag "latest" (could be a pre-release or draft)
+                for (int i = 0; i < releases.size(); i++) {
+                    JsonObject potential = releases.get(i).getAsJsonObject();
+                    String tag = potential.get("tag_name").getAsString();
+                    if ("latest".equals(tag)) {
+                        release = potential;
+                        usedTag = "latest";
+                        break;
+                    }
+                }
+
+                // If still no release, take the first one (newest by creation date)
+                if (release == null) {
+                    release = releases.get(0).getAsJsonObject();
+                    usedTag = release.get("tag_name").getAsString();
+                }
             } catch (Exception e) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Update check failed for &f" + entry.getName()
                     + "&7: " + e.getMessage()));
