@@ -29,14 +29,10 @@ jobs:
 
       - name: Collect JARs
         run: |
-          # Paper fat-JAR (shaded, contains core)
           PAPER_JAR=$(find paper/target/ -name "*.jar" ! -name "original-*" | head -n 1)
-          # Velocity fat-JAR (shaded, contains core + Gson + SnakeYAML relocated)
           VELOCITY_JAR=$(find velocity/target/ -name "*.jar" ! -name "original-*" | head -n 1)
 
           if [ -z "$PAPER_JAR" ] || [ -z "$VELOCITY_JAR" ]; then
-            echo "Error: could not find built JARs"
-            ls paper/target/ velocity/target/ || true
             exit 1
           fi
 
@@ -50,10 +46,17 @@ jobs:
         with:
           tag_name: build-${{ github.run_number }}
           name: "PluginUpdater Build #${{ github.run_number }}"
-          body: "Permanent archive — Build #${{ github.run_number }}."
+          body: "Archive of Build #${{ github.run_number }}"
           files: |
             PluginUpdater-Paper-build-${{ github.run_number }}.jar
             PluginUpdater-Velocity-build-${{ github.run_number }}.jar
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Delete Old Latest Tag
+        run: |
+          git tag -d latest || true
+          git push origin :refs/tags/latest || true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -61,11 +64,12 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: latest
-          name: "PluginUpdater — Latest Build"
-          body: "Always contains the newest JARs from the main branch."
-          make_latest: true
+          name: "PluginUpdater Latest Build"
+          body: "This release contains the latest executable and source code from the main branch."
           files: |
             PluginUpdater-Paper-latest.jar
             PluginUpdater-Velocity-latest.jar
+          prerelease: false
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
