@@ -73,8 +73,7 @@ public class GitHubUpdateChecker {
                     }
                 } else if (status == 404) {
                     // Tag "latest" not found, fall back to latest release
-                    logger.info(CC.c("&e[PluginUpdater] &7Tag 'latest' not found for &f" + entry.getName()
-                        + "&7, falling back to latest release."));
+                    // No log message to avoid spam
                 } else {
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
                         + " &7for tag 'latest' of &f" + entry.getName() + "&7."));
@@ -154,17 +153,14 @@ public class GitHubUpdateChecker {
                 String assetUpdatedAt = asset.get("updated_at").getAsString();
 
                 if (assetUpdatedAt.equals(storedKey)) {
-                    logger.info(CC.c("&e[PluginUpdater] &f" + entry.getName()
-                        + " &7is up to date &8(&ftag: " + latestTag + "&8)."));
+                    // Plugin is up to date, no log message to avoid spam
                     return Optional.empty();
                 }
 
                 if (storedKey != null) {
-                    logger.info(CC.c("&a[PluginUpdater] &7Update available for &f" + entry.getName()
-                        + "&7: tag &f" + latestTag + " &7(asset updated &f" + assetUpdatedAt + "&7)"));
+                    // Update available, no log to avoid spam
                 } else {
-                    logger.info(CC.c("&e[PluginUpdater] &7Initialising &f" + entry.getName()
-                        + " &7at tag &e" + latestTag + "&7."));
+                    // Initialising, no log to avoid spam
                 }
 
                 return Optional.of(new UpdateInfo(
@@ -175,7 +171,7 @@ public class GitHubUpdateChecker {
             // Try fallback: if pattern contains "latest", look for any jar asset containing plugin name
             boolean patternContainsLatest = entry.getAssetPattern().toLowerCase().contains("latest");
             if (patternContainsLatest) {
-                logger.info(CC.c("&e[PluginUpdater] &7Trying fallback asset detection for &f" + entry.getName() + "&7..."));
+                // Trying fallback asset detection, no log to avoid spam
                 for (int i = 0; i < assets.size(); i++) {
                     JsonObject asset = assets.get(i).getAsJsonObject();
                     String assetName = asset.get("name").getAsString();
@@ -185,24 +181,21 @@ public class GitHubUpdateChecker {
                         (assetName.toLowerCase().contains(entry.getName().toLowerCase()) ||
                          assetName.toLowerCase().contains(entry.getRepo().toLowerCase().replace("/", "-")))) {
 
-                        logger.info(CC.c("&e[PluginUpdater] &7Found fallback asset &f" + assetName + " &7for &f" + entry.getName()));
+                        // Found fallback asset, no log to avoid spam
 
                         long   assetId       = asset.get("id").getAsLong();
                         String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
                         String assetUpdatedAt = asset.get("updated_at").getAsString();
 
                         if (assetUpdatedAt.equals(storedKey)) {
-                            logger.info(CC.c("&e[PluginUpdater] &f" + entry.getName()
-                                + " &7is up to date &8(&ftag: " + latestTag + "&8)."));
+                            // Plugin is up to date, no log message to avoid spam
                             return Optional.empty();
                         }
 
                         if (storedKey != null) {
-                            logger.info(CC.c("&a[PluginUpdater] &7Update available for &f" + entry.getName()
-                                + "&7: tag &f" + latestTag + " &7(asset updated &f" + assetUpdatedAt + "&7)"));
+                            // Update available, no log to avoid spam
                         } else {
-                            logger.info(CC.c("&e[PluginUpdater] &7Initialising &f" + entry.getName()
-                                + " &7at tag &e" + latestTag + "&7."));
+                            // Initialising, no log to avoid spam
                         }
 
                         return Optional.of(new UpdateInfo(

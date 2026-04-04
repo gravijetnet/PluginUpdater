@@ -127,8 +127,7 @@ public class ShutdownHandler {
                 () -> runCheckSync("periodic", true),
                 intervalMinutes, intervalMinutes, TimeUnit.MINUTES
             );
-            logger.info(CC.c("&e[PluginUpdater] &7Periodic checks every &f"
-                + intervalMinutes + " &7min."));
+            // Periodic checks enabled, no log to avoid spam
         }
     }
 
@@ -140,7 +139,7 @@ public class ShutdownHandler {
         Thread hook = new Thread(this::runShutdownUpdates, "PluginUpdater-ShutdownHook");
         hook.setDaemon(false);
         Runtime.getRuntime().addShutdownHook(hook);
-        logger.info(CC.c("&e[PluginUpdater] &7Shutdown hook registered."));
+        // Shutdown hook registered, no log to avoid spam
     }
 
     /**
@@ -171,11 +170,11 @@ public class ShutdownHandler {
 
     /** Runs update checks synchronously on the current thread. */
     private void runCheckSync(String label, boolean allowActivation) {
-        logger.info(CC.c("&e[PluginUpdater] &7Checking for updates (&f" + label + "&7)..."));
+        // Checking for updates, no log to avoid spam
 
         List<PluginEntry> plugins = config.getPlugins();
         if (plugins.isEmpty()) {
-            logger.info(CC.c("&e[PluginUpdater] &7No plugins configured — nothing to check."));
+            // No plugins configured, no log to avoid spam
             return;
         }
 
@@ -188,7 +187,7 @@ public class ShutdownHandler {
             }
         }
 
-        logger.info(CC.c("&a[PluginUpdater] &7Update check complete (&f" + label + "&7)."));
+        // Update check complete, no log to avoid spam
     }
 
     /**

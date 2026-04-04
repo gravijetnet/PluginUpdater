@@ -61,7 +61,7 @@ public class PaperPlugin extends JavaPlugin {
         try {
             Path selfJar = getFile().toPath().toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
-            log.info(CC.c("&e[PluginUpdater] &7Self-JAR: &f" + selfJar.getFileName()));
+            // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
             log.warning(CC.c("&c[PluginUpdater] &7Could not determine self-JAR path: " + e.getMessage()));
         }
@@ -75,7 +75,7 @@ public class PaperPlugin extends JavaPlugin {
         // Check and download updates immediately in the background.
         shutdownHandler.onEnable();
 
-        log.info(CC.c("&a[PluginUpdater] &7Enabled &8\u00bb &7checking for updates in the background."));
+        // Plugin enabled, no log to avoid spam
     }
 
     /**

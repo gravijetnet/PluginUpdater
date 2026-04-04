@@ -73,7 +73,7 @@ public class ConfigManager {
         if (!Files.exists(configFile)) {
             Files.createDirectories(dataFolder);
             Files.writeString(configFile, DEFAULT_CONFIG, StandardCharsets.UTF_8);
-            logger.info(CC.c("&e[PluginUpdater] &7Created default &fconfig.yml&7 — add your plugins there."));
+            // Created default config.yml, no log to avoid spam
         }
 
         Yaml yaml = new Yaml();
@@ -104,7 +104,7 @@ public class ConfigManager {
         // Plugin list
         List<Map<String, Object>> list = (List<Map<String, Object>>) data.get("plugins");
         if (list == null || list.isEmpty()) {
-            logger.info(CC.c("&e[PluginUpdater] &7No plugins listed in config — nothing to check."));
+            // No plugins listed in config, no log to avoid spam
             return;
         }
 
@@ -124,7 +124,7 @@ public class ConfigManager {
                              : (!globalToken.isEmpty() ? globalToken : null);
 
             plugins.add(new PluginEntry(name, repo, pattern, resolved));
-            logger.info(CC.c("&e[PluginUpdater] &7Tracking &f" + name + " &8(&7" + repo + "&8)"));
+            // Tracking plugin, no log to avoid spam
         }
     }
 

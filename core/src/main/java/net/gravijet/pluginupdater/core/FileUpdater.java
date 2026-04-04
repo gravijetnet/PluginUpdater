@@ -55,7 +55,7 @@ public class FileUpdater {
             }
 
             Path temp = Files.createTempFile("pluginupdater-", "-" + displayName);
-            logger.info(CC.c("&e[PluginUpdater] &7Downloading &f" + displayName + "&7..."));
+            // Downloading, no log to avoid spam
 
             long bytes = 0;
             try (InputStream in = conn.getInputStream();
@@ -68,8 +68,7 @@ public class FileUpdater {
                 }
             }
 
-            logger.info(CC.c("&a[PluginUpdater] &7Downloaded &f" + displayName
-                + " &8(&7" + (bytes / 1024) + " KB&8)&7."));
+            // Downloaded, no log to avoid spam
             return temp;
 
         } catch (IOException e) {
@@ -101,8 +100,7 @@ public class FileUpdater {
             Files.move(sourceTempFile, targetPath,
                 StandardCopyOption.REPLACE_EXISTING,
                 StandardCopyOption.ATOMIC_MOVE);
-            logger.info(CC.c("&a[PluginUpdater] &7Replaced &f"
-                + targetPath.getFileName() + "&7 (atomic)."));
+            // Replaced (atomic), no log to avoid spam
             return true;
         } catch (AtomicMoveNotSupportedException ignored) {
             // Fall through to regular move
@@ -114,8 +112,7 @@ public class FileUpdater {
         // 2. Regular replace
         try {
             Files.move(sourceTempFile, targetPath, StandardCopyOption.REPLACE_EXISTING);
-            logger.info(CC.c("&a[PluginUpdater] &7Replaced &f"
-                + targetPath.getFileName() + "&7."));
+            // Replaced, no log to avoid spam
             return true;
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Could not replace &e"

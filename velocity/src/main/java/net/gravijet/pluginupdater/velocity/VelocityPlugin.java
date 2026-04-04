@@ -88,7 +88,7 @@ public class VelocityPlugin {
                 VelocityPlugin.class.getProtectionDomain().getCodeSource().getLocation().toURI()
             ).toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
-            slf4j.info("[PluginUpdater] Self-JAR: {}", selfJar.getFileName());
+            // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
             slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.getMessage());
         }
@@ -98,7 +98,7 @@ public class VelocityPlugin {
         // Check and download updates immediately in the background.
         shutdownHandler.onEnable();
 
-        slf4j.info("[PluginUpdater] Enabled \u00bb checking for updates in the background.");
+        // Plugin enabled, no log to avoid spam
     }
 
     @Subscribe
