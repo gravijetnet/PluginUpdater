@@ -3,6 +3,7 @@ package net.gravijet.pluginupdater.paper;
 import net.gravijet.pluginupdater.core.ConfigManager;
 import net.gravijet.pluginupdater.core.FileUpdater;
 import net.gravijet.pluginupdater.core.GitHubUpdateChecker;
+import net.gravijet.pluginupdater.core.ModrinthUpdateChecker;
 import net.gravijet.pluginupdater.core.PluginActivator;
 import net.gravijet.pluginupdater.core.ShutdownHandler;
 import net.gravijet.pluginupdater.core.VersionStore;
@@ -38,10 +39,11 @@ public class PaperPlugin extends JavaPlugin {
         // Plugins folder: plugins/
         Path pluginsDir = dataDir.getParent();
 
-        ConfigManager       configManager = new ConfigManager(dataDir, log);
-        VersionStore        versionStore  = new VersionStore(dataDir, log);
-        GitHubUpdateChecker checker       = new GitHubUpdateChecker(log);
-        FileUpdater         fileUpdater   = new FileUpdater(log);
+        ConfigManager        configManager    = new ConfigManager(dataDir, log);
+        VersionStore         versionStore     = new VersionStore(dataDir, log);
+        GitHubUpdateChecker  githubChecker    = new GitHubUpdateChecker(log);
+        ModrinthUpdateChecker modrinthChecker = new ModrinthUpdateChecker(log);
+        FileUpdater          fileUpdater      = new FileUpdater(log);
 
         try {
             configManager.load();
@@ -54,7 +56,7 @@ public class PaperPlugin extends JavaPlugin {
         }
 
         shutdownHandler = new ShutdownHandler(
-            configManager, versionStore, checker, fileUpdater, pluginsDir, log);
+            configManager, versionStore, githubChecker, modrinthChecker, fileUpdater, pluginsDir, log);
 
         // Register this plugin's own JAR so self-updates replace the correct file.
         // JavaPlugin#getFile() is a protected method accessible from within this class.

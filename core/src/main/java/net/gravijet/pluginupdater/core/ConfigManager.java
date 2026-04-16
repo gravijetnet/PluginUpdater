@@ -25,36 +25,53 @@ public class ConfigManager {
 
     // ── Default config written on first start ──────────────────────────────
     private static final String DEFAULT_CONFIG =
-        "# PluginUpdater — auto-update plugins from GitHub releases\n" +
+        "# PluginUpdater — auto-update plugins from GitHub or Modrinth releases\n" +
         "#\n" +
-        "# global token: used for all repos unless overridden per plugin.\n" +
+        "# Global GitHub token: used for all GitHub repos unless overridden per plugin.\n" +
         "# Leave empty (\"\") for public repos (no Authorization header sent).\n" +
         "github-access-token: \"\"\n" +
+        "\n" +
+        "# Global Modrinth token: used for all Modrinth projects unless overridden per plugin.\n" +
+        "# Optional — only needed for private projects or to raise the rate limit.\n" +
+        "modrinth-access-token: \"\"\n" +
         "\n" +
         "# How often (in minutes) to check for updates while the server is running.\n" +
         "# Set to 0 to disable periodic checks (updates only on startup/shutdown).\n" +
         "check-interval-minutes: 30\n" +
         "\n" +
         "plugins:\n" +
-        "  # Each entry needs: name, repo (owner/repo), asset-pattern (glob).\n" +
-        "  # Optionally add access-token to override the global token for that repo.\n" +
+        "  # Each entry needs: name, repo, asset-pattern (glob), and optionally source.\n" +
+        "  # source: github  (default) — repo is \"owner/repo\"\n" +
+        "  # source: modrinth         — repo is the Modrinth project slug or ID\n" +
+        "  # Optionally add access-token to override the global token for that entry.\n" +
         "  #\n" +
+        "  # --- GitHub examples ---\n" +
         "  # - name: \"EssentialsX\"\n" +
+        "  #   source: github\n" +
         "  #   repo: \"EssentialsX/Essentials\"\n" +
         "  #   asset-pattern: \"EssentialsX-*.jar\"\n" +
         "  #\n" +
         "  # - name: \"LuckPerms\"\n" +
+        "  #   source: github\n" +
         "  #   repo: \"LuckPerms/LuckPerms\"\n" +
         "  #   asset-pattern: \"LuckPerms-Bukkit-*.jar\"\n" +
         "  #\n" +
-        "  # - name: \"PluginUpdater\"\n" +
-        "  #   repo: \"yourname/PluginUpdater\"\n" +
-        "  #   asset-pattern: \"PluginUpdater-*.jar\"\n";
+        "  # --- Modrinth examples ---\n" +
+        "  # - name: \"Sodium\"\n" +
+        "  #   source: modrinth\n" +
+        "  #   repo: \"sodium\"\n" +
+        "  #   asset-pattern: \"sodium-fabric-*.jar\"\n" +
+        "  #\n" +
+        "  # - name: \"Geyser\"\n" +
+        "  #   source: modrinth\n" +
+        "  #   repo: \"geyser\"\n" +
+        "  #   asset-pattern: \"Geyser-Spigot.jar\"\n";
 
     private final Path dataFolder;
     private final Logger logger;
 
     private String globalToken = "";
+    private String modrinthGlobalToken = "";
     private int checkIntervalMinutes = 30;
     private final List<PluginEntry> plugins = new ArrayList<>();
 
@@ -87,9 +104,13 @@ public class ConfigManager {
             return;
         }
 
-        // Global token
+        // Global GitHub token
         Object tok = data.get("github-access-token");
         globalToken = tok != null ? tok.toString().trim() : "";
+
+        // Global Modrinth token
+        Object modrinthTok = data.get("modrinth-access-token");
+        modrinthGlobalToken = modrinthTok != null ? modrinthTok.toString().trim() : "";
 
         // Check interval
         Object interval = data.get("check-interval-minutes");
@@ -118,20 +139,36 @@ public class ConfigManager {
                 continue;
             }
 
-            // Per-plugin token overrides global; null means "no token" (public repo)
-            String perPlugin = str(entry, "access-token");
-            String resolved  = (perPlugin != null) ? perPlugin
-                             : (!globalToken.isEmpty() ? globalToken : null);
+            // Determine source (defaults to GITHUB if not specified)
+            String sourceStr = str(entry, "source");
+            PluginEntry.Source source;
+            if ("modrinth".equalsIgnoreCase(sourceStr)) {
+                source = PluginEntry.Source.MODRINTH;
+            } else {
+                source = PluginEntry.Source.GITHUB;
+            }
 
-            plugins.add(new PluginEntry(name, repo, pattern, resolved));
+            // Per-plugin token overrides the appropriate global token
+            String perPlugin = str(entry, "access-token");
+            String resolved;
+            if (perPlugin != null) {
+                resolved = perPlugin;
+            } else if (source == PluginEntry.Source.MODRINTH) {
+                resolved = !modrinthGlobalToken.isEmpty() ? modrinthGlobalToken : null;
+            } else {
+                resolved = !globalToken.isEmpty() ? globalToken : null;
+            }
+
+            plugins.add(new PluginEntry(name, repo, pattern, resolved, source));
             // Tracking plugin, no log to avoid spam
         }
     }
 
-    public List<PluginEntry> getPlugins()           { return Collections.unmodifiableList(plugins); }
-    public String            getGlobalToken()        { return globalToken; }
+    public List<PluginEntry> getPlugins()              { return Collections.unmodifiableList(plugins); }
+    public String            getGlobalToken()           { return globalToken; }
+    public String            getModrinthGlobalToken()   { return modrinthGlobalToken; }
     /** Returns the periodic check interval in minutes, or 0 if disabled. */
-    public int               getCheckIntervalMinutes() { return checkIntervalMinutes; }
+    public int               getCheckIntervalMinutes()  { return checkIntervalMinutes; }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 

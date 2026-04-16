@@ -50,12 +50,13 @@ public class ShutdownHandler {
     /** Maximum time to wait for the shutdown update worker before giving up. */
     private static final long TIMEOUT_MS = 30_000L;
 
-    private final ConfigManager         config;
-    private final VersionStore          versions;
-    private final GitHubUpdateChecker   checker;
-    private final FileUpdater           fileUpdater;
-    private final Path                  pluginsFolder;
-    private final Logger                logger;
+    private final ConfigManager          config;
+    private final VersionStore           versions;
+    private final GitHubUpdateChecker    githubChecker;
+    private final ModrinthUpdateChecker  modrinthChecker;
+    private final FileUpdater            fileUpdater;
+    private final Path                   pluginsFolder;
+    private final Logger                 logger;
 
     /**
      * Pre-registered JAR locations for plugins whose JAR path is known ahead of time
@@ -78,14 +79,17 @@ public class ShutdownHandler {
     private ScheduledExecutorService scheduler;
 
     public ShutdownHandler(ConfigManager config, VersionStore versions,
-                           GitHubUpdateChecker checker, FileUpdater fileUpdater,
+                           GitHubUpdateChecker githubChecker,
+                           ModrinthUpdateChecker modrinthChecker,
+                           FileUpdater fileUpdater,
                            Path pluginsFolder, Logger logger) {
-        this.config        = config;
-        this.versions      = versions;
-        this.checker       = checker;
-        this.fileUpdater   = fileUpdater;
-        this.pluginsFolder = pluginsFolder;
-        this.logger        = logger;
+        this.config          = config;
+        this.versions        = versions;
+        this.githubChecker   = githubChecker;
+        this.modrinthChecker = modrinthChecker;
+        this.fileUpdater     = fileUpdater;
+        this.pluginsFolder   = pluginsFolder;
+        this.logger          = logger;
     }
 
     // ── Public API ─────────────────────────────────────────────────────────
@@ -244,23 +248,34 @@ public class ShutdownHandler {
                 logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + entry.getName()
                     + " &7is missing — forcing re-download."));
             }
-            Optional<UpdateInfo> opt = checker.checkForUpdate(entry, null);
+            Optional<UpdateInfo> opt = checkForUpdate(entry, null);
             opt.ifPresent(u -> downloadAndReplace(entry, u, allowActivation, isFreshInstall));
             return;
         }
 
-        // Cases 1 & 2: JAR present — compare against latest GitHub asset timestamp
+        // Cases 1 & 2: JAR present — compare against stored key
         // storedKey == null means we have never tracked this plugin; always download to sync.
-        Optional<UpdateInfo> opt = checker.checkForUpdate(entry, storedKey);
+        Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
         opt.ifPresent(u -> downloadAndReplace(entry, u, allowActivation, false));
+    }
+
+    /** Routes the update check to the correct checker based on the entry's source. */
+    private Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
+        if (entry.getSource() == PluginEntry.Source.MODRINTH) {
+            return modrinthChecker.checkForUpdate(entry, storedKey);
+        }
+        return githubChecker.checkForUpdate(entry, storedKey);
     }
 
     /** Downloads the update, atomically replaces the target JAR, and optionally activates. */
     private void downloadAndReplace(PluginEntry entry, UpdateInfo update,
                                     boolean allowActivation, boolean isNewInstall) {
         String tempName = entry.getName() + "-" + update.getNewVersion() + ".jar";
+        // Modrinth CDN downloads are always public — no auth header needed.
+        String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
+            ? null : entry.getAccessToken();
         Path tempFile = fileUpdater.downloadToTemp(
-            update.getDownloadUrl(), tempName, entry.getAccessToken());
+            update.getDownloadUrl(), tempName, downloadToken);
 
         if (tempFile == null) return; // download failed, already logged
 

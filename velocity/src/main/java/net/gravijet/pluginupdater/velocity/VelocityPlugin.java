@@ -10,6 +10,7 @@ import com.velocitypowered.api.proxy.ProxyServer;
 import net.gravijet.pluginupdater.core.ConfigManager;
 import net.gravijet.pluginupdater.core.FileUpdater;
 import net.gravijet.pluginupdater.core.GitHubUpdateChecker;
+import net.gravijet.pluginupdater.core.ModrinthUpdateChecker;
 import net.gravijet.pluginupdater.core.ShutdownHandler;
 import net.gravijet.pluginupdater.core.VersionStore;
 import net.gravijet.pluginupdater.core.util.CC;
@@ -66,10 +67,11 @@ public class VelocityPlugin {
         // pluginsDir    = <proxy-root>/plugins/
         Path pluginsDir = dataDirectory.getParent();
 
-        ConfigManager       configManager = new ConfigManager(dataDirectory, coreLogger);
-        VersionStore        versionStore  = new VersionStore(dataDirectory, coreLogger);
-        GitHubUpdateChecker checker       = new GitHubUpdateChecker(coreLogger);
-        FileUpdater         fileUpdater   = new FileUpdater(coreLogger);
+        ConfigManager         configManager    = new ConfigManager(dataDirectory, coreLogger);
+        VersionStore          versionStore     = new VersionStore(dataDirectory, coreLogger);
+        GitHubUpdateChecker   githubChecker    = new GitHubUpdateChecker(coreLogger);
+        ModrinthUpdateChecker modrinthChecker  = new ModrinthUpdateChecker(coreLogger);
+        FileUpdater           fileUpdater      = new FileUpdater(coreLogger);
 
         try {
             configManager.load();
@@ -80,7 +82,7 @@ public class VelocityPlugin {
         }
 
         shutdownHandler = new ShutdownHandler(
-            configManager, versionStore, checker, fileUpdater, pluginsDir, coreLogger);
+            configManager, versionStore, githubChecker, modrinthChecker, fileUpdater, pluginsDir, coreLogger);
 
         // Attempt to register this plugin's own JAR for clean self-updates.
         try {
