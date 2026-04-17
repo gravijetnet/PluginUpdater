@@ -1,138 +1,75 @@
- name: Build and Release PluginUpdater
-
+name: Build and Release PluginUpdater
 
 on:
-
   push:
-
     branches: [ "main" ]
-
   workflow_dispatch:
 
-
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
-
     permissions:
-
       contents: write
 
-
     steps:
-
       - name: Checkout Source
-
         uses: actions/checkout@v4
-
         with:
-
           fetch-depth: 0
 
-
       - name: Set up JDK 21
-
         uses: actions/setup-java@v4
-
         with:
-
           java-version: '21'
-
           distribution: 'temurin'
-
           cache: maven
 
-
       - name: Build with Maven
-
         run: mvn -B package --file pom.xml
 
-
       - name: Collect JARs
-
         run: |
-
           PAPER_JAR=$(find paper/target/ -name "*.jar" ! -name "original-*" | head -n 1)
-
           VELOCITY_JAR=$(find velocity/target/ -name "*.jar" ! -name "original-*" | head -n 1)
 
-
           if [ -z "$PAPER_JAR" ] || [ -z "$VELOCITY_JAR" ]; then
-
             exit 1
-
           fi
 
-
           cp "$PAPER_JAR"    "./PluginUpdater-Paper-build-${{ github.run_number }}.jar"
-
           cp "$VELOCITY_JAR" "./PluginUpdater-Velocity-build-${{ github.run_number }}.jar"
-
           cp "$PAPER_JAR"    "./PluginUpdater-Paper-latest.jar"
-
           cp "$VELOCITY_JAR" "./PluginUpdater-Velocity-latest.jar"
 
-
       - name: Create Archive Release
-
         uses: softprops/action-gh-release@v2
-
         with:
-
           tag_name: build-${{ github.run_number }}
-
           name: "PluginUpdater Build #${{ github.run_number }}"
-
           body: "Archive of Build #${{ github.run_number }}"
-
           files: |
-
             PluginUpdater-Paper-build-${{ github.run_number }}.jar
-
             PluginUpdater-Velocity-build-${{ github.run_number }}.jar
-
         env:
-
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 
       - name: Delete Old Latest Tag
-
         run: |
-
           git tag -d latest || true
-
           git push origin :refs/tags/latest || true
-
         env:
-
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-
       - name: Update Latest Release
-
         uses: softprops/action-gh-release@v2
-
         with:
-
           tag_name: latest
-
           name: "PluginUpdater Latest Build"
-
           body: "This release contains the latest executable and source code from the main branch."
-
           files: |
-
             PluginUpdater-Paper-latest.jar
-
             PluginUpdater-Velocity-latest.jar
-
           prerelease: false
-
           make_latest: true
-
         env:
-
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
