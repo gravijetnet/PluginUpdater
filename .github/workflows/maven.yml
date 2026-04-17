@@ -29,16 +29,16 @@ jobs:
 
       - name: Collect JARs
         run: |
-          PAPER_JAR=$(find paper/target/ -name "*.jar" ! -name "original-*" | head -n 1)
+          SPIGOT_JAR=$(find spigot/target/ -name "*.jar" ! -name "original-*" | head -n 1)
           VELOCITY_JAR=$(find velocity/target/ -name "*.jar" ! -name "original-*" | head -n 1)
 
-          if [ -z "$PAPER_JAR" ] || [ -z "$VELOCITY_JAR" ]; then
+          if [ -z "$SPIGOT_JAR" ] || [ -z "$VELOCITY_JAR" ]; then
             exit 1
           fi
 
-          cp "$PAPER_JAR"    "./PluginUpdater-Paper-build-${{ github.run_number }}.jar"
+          cp "$SPIGOT_JAR"   "./PluginUpdater-Spigot-build-${{ github.run_number }}.jar"
           cp "$VELOCITY_JAR" "./PluginUpdater-Velocity-build-${{ github.run_number }}.jar"
-          cp "$PAPER_JAR"    "./PluginUpdater-Paper-latest.jar"
+          cp "$SPIGOT_JAR"   "./PluginUpdater-Spigot-latest.jar"
           cp "$VELOCITY_JAR" "./PluginUpdater-Velocity-latest.jar"
 
       - name: Create Archive Release
@@ -48,7 +48,7 @@ jobs:
           name: "PluginUpdater Build #${{ github.run_number }}"
           body: "Archive of Build #${{ github.run_number }}"
           files: |
-            PluginUpdater-Paper-build-${{ github.run_number }}.jar
+            PluginUpdater-Spigot-build-${{ github.run_number }}.jar
             PluginUpdater-Velocity-build-${{ github.run_number }}.jar
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -67,7 +67,7 @@ jobs:
           name: "PluginUpdater Latest Build"
           body: "This release contains the latest executable and source code from the main branch."
           files: |
-            PluginUpdater-Paper-latest.jar
+            PluginUpdater-Spigot-latest.jar
             PluginUpdater-Velocity-latest.jar
           prerelease: false
           make_latest: true
