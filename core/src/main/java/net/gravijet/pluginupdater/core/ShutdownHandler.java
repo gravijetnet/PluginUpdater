@@ -68,13 +68,6 @@ public class ShutdownHandler {
     /** Ensures shutdown update logic runs at most once per JVM lifecycle. */
     private final AtomicBoolean hasRun = new AtomicBoolean(false);
 
-    /**
-     * Optional platform callback invoked after a JAR has been downloaded.
-     * Called for both fresh installs and updates so the platform can hot-reload.
-     * {@code null} means no activation / reload.
-     */
-    private PluginActivator pluginActivator;
-
     /** Runs periodic checks while the server is online. {@code null} if interval == 0. */
     private ScheduledExecutorService scheduler;
 
@@ -103,21 +96,12 @@ public class ShutdownHandler {
     }
 
     /**
-     * Sets a platform-specific callback invoked after any JAR download (fresh install
-     * or update).  The callback may attempt to load / reload the plugin at runtime.
-     * Pass {@code null} to disable.
-     */
-    public void setPluginActivator(PluginActivator activator) {
-        this.pluginActivator = activator;
-    }
-
-    /**
      * Runs an immediate background update check and starts the periodic scheduler.
      * Must be called once during plugin enable, after {@link #registerKnownJar}.
      */
     public void onEnable() {
         // Immediate check on startup
-        runCheckAsync("startup", true);
+        runCheckAsync("startup");
 
         // Periodic checks while online
         int intervalMinutes = config.getCheckIntervalMinutes();
@@ -128,7 +112,7 @@ public class ShutdownHandler {
                 return t;
             });
             scheduler.scheduleAtFixedRate(
-                () -> runCheckSync("periodic", true),
+                () -> runCheckSync("periodic"),
                 intervalMinutes, intervalMinutes, TimeUnit.MINUTES
             );
             // Periodic checks enabled, no log to avoid spam
@@ -164,27 +148,24 @@ public class ShutdownHandler {
      * Starts a background thread for update checks (non-blocking).
      * Used for startup and periodic checks so the calling thread is never blocked.
      */
-    private void runCheckAsync(String label, boolean allowActivation) {
+    private void runCheckAsync(String label) {
         Thread worker = new Thread(
-            () -> runCheckSync(label, allowActivation),
+            () -> runCheckSync(label),
             "PluginUpdater-" + label + "Worker");
         worker.setDaemon(true);
         worker.start();
     }
 
     /** Runs update checks synchronously on the current thread. */
-    private void runCheckSync(String label, boolean allowActivation) {
-        // Checking for updates, no log to avoid spam
-
+    private void runCheckSync(String label) {
         List<PluginEntry> plugins = config.getPlugins();
         if (plugins.isEmpty()) {
-            // No plugins configured, no log to avoid spam
             return;
         }
 
         for (PluginEntry entry : plugins) {
             try {
-                processPlugin(entry, allowActivation);
+                processPlugin(entry);
             } catch (Exception e) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Unexpected error for &f"
                     + entry.getName() + "&7: " + e.getMessage()));
@@ -205,7 +186,7 @@ public class ShutdownHandler {
         }
 
         Thread worker = new Thread(
-            () -> runCheckSync("shutdown", false), // no hot-reload during shutdown
+            () -> runCheckSync("shutdown"),
             "PluginUpdater-ShutdownWorker");
         worker.setDaemon(false);
         worker.start();
@@ -228,35 +209,31 @@ public class ShutdownHandler {
      *
      * <p>Decision matrix:
      * <ol>
-     *   <li>Stored key present + JAR exists → compare GitHub asset timestamp; download if newer.
-     *   <li>No stored key + JAR exists → no stored version: always download latest to get current.
+     *   <li>Stored key present + JAR exists → compare asset timestamp; download if newer.
+     *   <li>No stored key + JAR exists → no stored version: always download latest to sync.
      *   <li>No stored key + JAR missing → fresh install: download latest.
      *   <li>Stored key present + JAR missing → JAR deleted: force re-download.
      * </ol>
-     *
-     * @param allowActivation if {@code true} the {@link PluginActivator} (if set) is called
-     *                        after a successful download so the platform can hot-reload.
      */
-    private void processPlugin(PluginEntry entry, boolean allowActivation) {
+    private void processPlugin(PluginEntry entry) {
         String storedKey   = versions.getVersion(entry.getName());
         boolean jarPresent = findExistingJar(entry).isPresent();
 
         if (!jarPresent) {
             // Cases 3 & 4: JAR missing — always download
-            boolean isFreshInstall = (storedKey == null);
-            if (!isFreshInstall) {
+            if (storedKey != null) {
                 logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + entry.getName()
                     + " &7is missing — forcing re-download."));
             }
             Optional<UpdateInfo> opt = checkForUpdate(entry, null);
-            opt.ifPresent(u -> downloadAndReplace(entry, u, allowActivation, isFreshInstall));
+            opt.ifPresent(u -> downloadAndReplace(entry, u));
             return;
         }
 
         // Cases 1 & 2: JAR present — compare against stored key
         // storedKey == null means we have never tracked this plugin; always download to sync.
         Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
-        opt.ifPresent(u -> downloadAndReplace(entry, u, allowActivation, false));
+        opt.ifPresent(u -> downloadAndReplace(entry, u));
     }
 
     /** Routes the update check to the correct checker based on the entry's source. */
@@ -267,11 +244,9 @@ public class ShutdownHandler {
         return githubChecker.checkForUpdate(entry, storedKey);
     }
 
-    /** Downloads the update, atomically replaces the target JAR, and optionally activates. */
-    private void downloadAndReplace(PluginEntry entry, UpdateInfo update,
-                                    boolean allowActivation, boolean isNewInstall) {
+    /** Downloads the update and atomically replaces the target JAR on disk. */
+    private void downloadAndReplace(PluginEntry entry, UpdateInfo update) {
         String tempName = entry.getName() + "-" + update.getNewVersion() + ".jar";
-        // Modrinth CDN downloads are always public — no auth header needed.
         String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
             ? null : entry.getAccessToken();
         Path tempFile = fileUpdater.downloadToTemp(
@@ -298,23 +273,9 @@ public class ShutdownHandler {
 
             versions.setVersion(entry.getName(), update.getStoreKey());
 
-            if (allowActivation && pluginActivator != null) {
-                String action = isNewInstall ? "installed" : "updated to tag";
-                logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + entry.getName()
-                    + " &7" + action + " &a" + update.getNewVersion()
-                    + " &7— applying at runtime..."));
-                try {
-                    pluginActivator.apply(entry.getName(), targetJar, isNewInstall);
-                } catch (Exception e) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7Runtime apply failed for &f"
-                        + entry.getName() + "&7: " + e.getMessage()
-                        + " &8(&7will be fully active on next start&8)"));
-                }
-            } else {
-                logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + entry.getName()
-                    + " &7updated to tag &a" + update.getNewVersion()
-                    + " &7(active on next start)"));
-            }
+            logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + entry.getName()
+                + " &7updated to &a" + update.getNewVersion()
+                + " &7(active on next start)"));
         }
     }
 
