@@ -69,11 +69,13 @@ public class ModrinthUpdateChecker {
             int status = conn.getResponseCode();
 
             if (status == 404) {
+                conn.disconnect();
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth project not found: &e"
                     + entry.getRepo() + " &7— check the &erepo&7 field in config.yml."));
                 return Optional.empty();
             }
             if (status != 200) {
+                conn.disconnect();
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API returned HTTP &e" + status
                     + " &7for &f" + entry.getName() + "&7."));
                 return Optional.empty();

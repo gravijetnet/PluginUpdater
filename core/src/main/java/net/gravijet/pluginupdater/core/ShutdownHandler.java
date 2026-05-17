@@ -8,9 +8,9 @@ import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.Optional;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -63,7 +63,7 @@ public class ShutdownHandler {
      * (e.g. the updater's own JAR, obtained from the class-loader / plugin API).
      * Key = plugin name as configured in config.yml (case-sensitive).
      */
-    private final Map<String, Path> knownJarPaths = new HashMap<>();
+    private final Map<String, Path> knownJarPaths = new ConcurrentHashMap<>();
 
     /** Ensures shutdown update logic runs at most once per JVM lifecycle. */
     private final AtomicBoolean hasRun = new AtomicBoolean(false);

@@ -6,8 +6,10 @@ import org.yaml.snakeyaml.Yaml;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -81,15 +83,30 @@ public class VersionStore {
 
     private void persist() {
         Path file = dataFolder.resolve("versions.yml");
+        Path tmp  = file.resolveSibling("versions.yml.tmp");
+
         StringBuilder sb = new StringBuilder(
             "# PluginUpdater version store — managed automatically, do not edit.\n");
+        // Quote both key and value to prevent YAML injection from special characters
         versions.forEach((name, ver) ->
-            sb.append(name).append(": \"").append(ver).append("\"\n")
+            sb.append(quoteYaml(name)).append(": ").append(quoteYaml(ver)).append('\n')
         );
+
         try {
-            Files.writeString(file, sb.toString(), StandardCharsets.UTF_8);
+            Files.writeString(tmp, sb.toString(), StandardCharsets.UTF_8);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Failed to save versions.yml: " + e.getMessage()));
+            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
         }
+    }
+
+    /** Wraps {@code s} in YAML double-quoted style, escaping {@code \} and {@code "}. */
+    private static String quoteYaml(String s) {
+        return '"' + s.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
     }
 }

@@ -41,10 +41,10 @@ public class FileUpdater {
      */
     public Path downloadToTemp(String downloadUrl, String displayName, String accessToken) {
         try {
-            // GitHub redirects browser_download_url → S3.
-            // We follow redirects manually to avoid sending the auth header to S3.
+            // GitHub redirects asset API endpoint → S3.
+            // We follow redirects manually so the auth header is not leaked to S3.
             HttpURLConnection conn = openGet(downloadUrl, accessToken);
-            conn = followRedirects(conn, /* sendAuthOnRedirect= */ false);
+            conn = followRedirects(conn, null); // auth not forwarded to redirects (e.g. S3)
 
             int status = conn.getResponseCode();
             if (status != 200) {
@@ -55,21 +55,23 @@ public class FileUpdater {
             }
 
             Path temp = Files.createTempFile("pluginupdater-", "-" + displayName);
-            // Downloading, no log to avoid spam
-
-            long bytes = 0;
-            try (InputStream in = conn.getInputStream();
-                 OutputStream out = Files.newOutputStream(temp)) {
-                byte[] buf = new byte[16_384];
-                int n;
-                while ((n = in.read(buf)) != -1) {
-                    out.write(buf, 0, n);
-                    bytes += n;
+            boolean success = false;
+            try {
+                try (InputStream in = conn.getInputStream();
+                     OutputStream out = Files.newOutputStream(temp)) {
+                    byte[] buf = new byte[16_384];
+                    int n;
+                    while ((n = in.read(buf)) != -1) {
+                        out.write(buf, 0, n);
+                    }
+                }
+                success = true;
+                return temp;
+            } finally {
+                if (!success) {
+                    try { Files.deleteIfExists(temp); } catch (IOException ignored) {}
                 }
             }
-
-            // Downloaded, no log to avoid spam
-            return temp;
 
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Download error for &e" + displayName
@@ -144,9 +146,9 @@ public class FileUpdater {
 
     /**
      * Follows HTTP 3xx redirects up to 10 hops.
-     * The auth header is NOT forwarded on redirects (GitHub → S3 flow).
+     * Pass {@code null} as {@code tokenForRedirects} to strip auth (GitHub asset → S3 flow).
      */
-    private static HttpURLConnection followRedirects(HttpURLConnection conn, boolean sendAuthOnRedirect)
+    private static HttpURLConnection followRedirects(HttpURLConnection conn, String tokenForRedirects)
         throws IOException {
         int hops = 0;
         while (hops < 10) {
@@ -154,10 +156,7 @@ public class FileUpdater {
             if (status < 300 || status >= 400) break;
             String location = conn.getHeaderField("Location");
             if (location == null) break;
-            // Do not forward the auth token to the redirect target (e.g. S3)
-            conn = sendAuthOnRedirect
-                ? openGet(location, conn.getRequestProperty("Authorization"))
-                : openGet(location, null);
+            conn = openGet(location, tokenForRedirects);
             hops++;
         }
         return conn;
