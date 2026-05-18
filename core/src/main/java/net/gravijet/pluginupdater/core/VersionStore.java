@@ -121,7 +121,15 @@ public class VersionStore {
                 case '\r' -> sb.append("\\r");
                 case '\t' -> sb.append("\\t");
                 case '\0' -> sb.append("\\0");
-                default   -> sb.append(c);
+                default   -> {
+                    // Escape remaining C0 control characters (U+0001–U+001F) that are
+                    // illegal in YAML double-quoted scalars when emitted literally.
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04X", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
             }
         }
         sb.append('"');

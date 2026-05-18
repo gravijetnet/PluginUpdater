@@ -76,7 +76,7 @@ public class ShutdownHandler {
     private final Set<String> processingPlugins = ConcurrentHashMap.newKeySet();
 
     /** Runs periodic checks while the server is online. {@code null} if interval == 0. */
-    private ScheduledExecutorService scheduler;
+    private volatile ScheduledExecutorService scheduler;
 
     public ShutdownHandler(ConfigManager config, VersionStore versions,
                            GitHubUpdateChecker githubChecker,

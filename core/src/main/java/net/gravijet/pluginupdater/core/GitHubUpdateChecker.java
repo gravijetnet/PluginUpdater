@@ -67,6 +67,15 @@ public class GitHubUpdateChecker {
                 if (!potential.has("message")) {
                     release = potential;
                 }
+            } else if (status == 401 || status == 403) {
+                logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
+                    + " &7for &f" + entry.getName()
+                    + " &7— check your &eaccess-token&7 in config.yml."));
+                return Optional.empty();
+            } else if (status == 429) {
+                logger.warning(CC.c("&c[PluginUpdater] &7GitHub API rate-limited (HTTP 429) for &f"
+                    + entry.getName() + " &7— try again later."));
+                return Optional.empty();
             } else if (status != 404) {
                 // 404 means the "latest" tag doesn't exist — fall through to list-based lookup
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
