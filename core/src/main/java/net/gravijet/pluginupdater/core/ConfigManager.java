@@ -2,7 +2,9 @@ package net.gravijet.pluginupdater.core;
 
 import net.gravijet.pluginupdater.core.model.PluginEntry;
 import net.gravijet.pluginupdater.core.util.CC;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -86,6 +88,11 @@ public class ConfigManager {
     @SuppressWarnings("unchecked")
     public void load() throws IOException {
         Path configFile = dataFolder.resolve("config.yml");
+        // Reset all fields so re-loading a config with missing keys reverts to defaults.
+        globalToken = "";
+        modrinthGlobalToken = "";
+        checkIntervalMinutes = 30;
+        plugins.clear();
 
         if (!Files.exists(configFile)) {
             Files.createDirectories(dataFolder);
@@ -93,7 +100,7 @@ public class ConfigManager {
             // Created default config.yml, no log to avoid spam
         }
 
-        Yaml yaml = new Yaml();
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         Map<String, Object> data;
         try (InputStream is = Files.newInputStream(configFile)) {
             data = yaml.load(is);
@@ -115,21 +122,38 @@ public class ConfigManager {
         // Check interval
         Object interval = data.get("check-interval-minutes");
         if (interval != null) {
-            try {
-                checkIntervalMinutes = Math.max(0, Integer.parseInt(interval.toString().trim()));
-            } catch (NumberFormatException e) {
-                logger.warning(CC.c("&c[PluginUpdater] &7Invalid check-interval-minutes — using default (30)."));
+            if (interval instanceof Number) {
+                checkIntervalMinutes = Math.max(0, ((Number) interval).intValue());
+            } else {
+                try {
+                    checkIntervalMinutes = Math.max(0, Integer.parseInt(interval.toString().trim()));
+                } catch (NumberFormatException e) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7Invalid check-interval-minutes — using default (30)."));
+                }
             }
         }
 
         // Plugin list
-        List<Map<String, Object>> list = (List<Map<String, Object>>) data.get("plugins");
-        if (list == null || list.isEmpty()) {
-            // No plugins listed in config, no log to avoid spam
+        Object pluginsRaw = data.get("plugins");
+        if (pluginsRaw == null) {
+            return;
+        }
+        if (!(pluginsRaw instanceof List)) {
+            logger.warning(CC.c("&c[PluginUpdater] &7'plugins' in config.yml must be a YAML list — no plugins will be tracked."));
+            return;
+        }
+        List<?> list = (List<?>) pluginsRaw;
+        if (list.isEmpty()) {
             return;
         }
 
-        for (Map<String, Object> entry : list) {
+        for (Object raw : list) {
+            if (!(raw instanceof Map)) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Skipping malformed plugin entry (expected a YAML mapping)."));
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            Map<String, Object> entry = (Map<String, Object>) raw;
             String name    = str(entry, "name");
             String repo    = str(entry, "repo");
             String pattern = str(entry, "asset-pattern");

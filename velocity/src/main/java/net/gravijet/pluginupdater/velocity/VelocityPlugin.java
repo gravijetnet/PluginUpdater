@@ -92,7 +92,7 @@ public class VelocityPlugin {
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
-            slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.getMessage());
+            slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.toString());
         }
 
         shutdownHandler.registerShutdownHook();

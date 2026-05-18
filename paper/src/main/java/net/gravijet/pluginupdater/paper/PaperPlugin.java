@@ -58,7 +58,7 @@ public class PaperPlugin extends JavaPlugin {
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
-            log.warning(CC.c("&c[PluginUpdater] &7Could not determine self-JAR path: " + e.getMessage()));
+            log.warning(CC.c("&c[PluginUpdater] &7Could not determine self-JAR path: " + e));
         }
 
         shutdownHandler.registerShutdownHook();

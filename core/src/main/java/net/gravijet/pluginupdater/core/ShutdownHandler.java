@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.Optional;
 import java.util.concurrent.Executors;
@@ -67,6 +68,12 @@ public class ShutdownHandler {
 
     /** Ensures shutdown update logic runs at most once per JVM lifecycle. */
     private final AtomicBoolean hasRun = new AtomicBoolean(false);
+
+    /** Reference to the startup background thread so onDisable() can join it. */
+    private volatile Thread startupThread;
+
+    /** Prevents concurrent processing of the same plugin from overlapping threads. */
+    private final Set<String> processingPlugins = ConcurrentHashMap.newKeySet();
 
     /** Runs periodic checks while the server is online. {@code null} if interval == 0. */
     private ScheduledExecutorService scheduler;
@@ -136,10 +143,32 @@ public class ShutdownHandler {
      * The JVM shutdown hook handles forced kills.
      */
     public void onDisable() {
+        // Track interruption but don't re-set the flag until after runShutdownUpdates().
+        // If the flag were set earlier, worker.join() inside runShutdownUpdates() would
+        // throw InterruptedException immediately and the shutdown updates would not be awaited.
+        boolean interrupted = false;
+
         if (scheduler != null) {
             scheduler.shutdownNow();
+            try {
+                scheduler.awaitTermination(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
+        }
+        // Join the startup background thread so we don't race with an in-progress download.
+        // Without this, the startup thread could be killed mid-download by the JVM exiting,
+        // leaving a partial temp file and no stored version (forcing a redundant re-download).
+        Thread startup = startupThread;
+        if (startup != null && startup.isAlive()) {
+            try {
+                startup.join(TIMEOUT_MS);
+            } catch (InterruptedException e) {
+                interrupted = true;
+            }
         }
         runShutdownUpdates();
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     // ── Core logic ─────────────────────────────────────────────────────────
@@ -151,8 +180,11 @@ public class ShutdownHandler {
     private void runCheckAsync(String label) {
         Thread worker = new Thread(
             () -> runCheckSync(label),
-            "PluginUpdater-" + label + "Worker");
+            "PluginUpdater-" + label + "-Worker");
         worker.setDaemon(true);
+        if ("startup".equals(label)) {
+            startupThread = worker;
+        }
         worker.start();
     }
 
@@ -168,7 +200,7 @@ public class ShutdownHandler {
                 processPlugin(entry);
             } catch (Exception e) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Unexpected error for &f"
-                    + entry.getName() + "&7: " + e.getMessage()));
+                    + entry.getName() + "&7: " + e));
             }
         }
 
@@ -216,24 +248,32 @@ public class ShutdownHandler {
      * </ol>
      */
     private void processPlugin(PluginEntry entry) {
-        String storedKey   = versions.getVersion(entry.getName());
-        boolean jarPresent = findExistingJar(entry).isPresent();
-
-        if (!jarPresent) {
-            // Cases 3 & 4: JAR missing — always download
-            if (storedKey != null) {
-                logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + entry.getName()
-                    + " &7is missing — forcing re-download."));
-            }
-            Optional<UpdateInfo> opt = checkForUpdate(entry, null);
-            opt.ifPresent(u -> downloadAndReplace(entry, u));
-            return;
+        if (!processingPlugins.add(entry.getName())) {
+            return; // startup worker or another check already processing this plugin
         }
+        try {
+            String storedKey      = versions.getVersion(entry.getName());
+            Optional<Path> oldJar = findExistingJar(entry);
+            boolean jarPresent    = oldJar.isPresent();
 
-        // Cases 1 & 2: JAR present — compare against stored key
-        // storedKey == null means we have never tracked this plugin; always download to sync.
-        Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
-        opt.ifPresent(u -> downloadAndReplace(entry, u));
+            if (!jarPresent) {
+                // Cases 3 & 4: JAR missing — always download
+                if (storedKey != null) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + entry.getName()
+                        + " &7is missing — forcing re-download."));
+                }
+                Optional<UpdateInfo> opt = checkForUpdate(entry, null);
+                opt.ifPresent(u -> downloadAndReplace(entry, u, Optional.empty()));
+                return;
+            }
+
+            // Cases 1 & 2: JAR present — compare against stored key
+            // storedKey == null means we have never tracked this plugin; always download to sync.
+            Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
+            opt.ifPresent(u -> downloadAndReplace(entry, u, oldJar));
+        } finally {
+            processingPlugins.remove(entry.getName());
+        }
     }
 
     /** Routes the update check to the correct checker based on the entry's source. */
@@ -245,8 +285,9 @@ public class ShutdownHandler {
     }
 
     /** Downloads the update and atomically replaces the target JAR on disk. */
-    private void downloadAndReplace(PluginEntry entry, UpdateInfo update) {
-        String tempName = entry.getName() + "-" + update.getNewVersion() + ".jar";
+    private void downloadAndReplace(PluginEntry entry, UpdateInfo update, Optional<Path> oldJar) {
+        String safeVer  = sanitizeFilename(update.getNewVersion());
+        String tempName = sanitizeFilename(entry.getName()) + "-" + safeVer + ".jar";
         String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
             ? null : entry.getAccessToken();
         Path tempFile = fileUpdater.downloadToTemp(
@@ -254,8 +295,7 @@ public class ShutdownHandler {
 
         if (tempFile == null) return; // download failed, already logged
 
-        Optional<Path> oldJar = findExistingJar(entry);
-        Path targetJar = resolveTargetJar(entry, update.getNewVersion());
+        Path targetJar = resolveTargetJar(entry, safeVer);
 
         if (fileUpdater.atomicReplace(tempFile, targetJar)) {
             // Remove old JAR if it had a different name (e.g. old version in filename)
@@ -276,6 +316,10 @@ public class ShutdownHandler {
             logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + entry.getName()
                 + " &7updated to &a" + update.getNewVersion()
                 + " &7(active on next start)"));
+        } else {
+            logger.warning(CC.c("&c[PluginUpdater] &7Could not install update for &f" + entry.getName()
+                + " &7\u2014 new JAR saved at: &f" + tempFile
+                + " &7(copy it manually to the plugins folder)"));
         }
     }
 
@@ -288,18 +332,44 @@ public class ShutdownHandler {
         Path known = knownJarPaths.get(entry.getName());
         if (known != null && Files.exists(known)) return Optional.of(known);
 
-        // 2. Scan plugins folder (case-insensitive prefix match)
+        // 2. Scan plugins folder — match "<name>.jar" or "<name>-<version>.jar" exactly
+        //    (a plain startsWith would match "ExamplePlugin" when looking for "Example")
+        //    When multiple matches exist (e.g. old locked JAR + new version on Windows),
+        //    return the most recently modified one to avoid using a stale copy.
         String nameLower = entry.getName().toLowerCase();
+        String versionedPrefix = nameLower + "-";
+        Path bestMatch = null;
+        long bestMtime = -1;
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(pluginsFolder, "*.jar")) {
             for (Path jar : stream) {
-                if (jar.getFileName().toString().toLowerCase().startsWith(nameLower)) {
-                    return Optional.of(jar);
+                String fname = jar.getFileName().toString().toLowerCase();
+                boolean matched = false;
+                if (fname.equals(nameLower + ".jar")) {
+                    matched = true;
+                } else if (fname.startsWith(versionedPrefix)) {
+                    // Require the character after the dash to be a digit or 'v' so that
+                    // "essentialsx-chatcolor-1.0.jar" is not mistaken for "essentialsx".
+                    char first = fname.charAt(versionedPrefix.length());
+                    if (Character.isDigit(first) || first == 'v') {
+                        matched = true;
+                    }
+                }
+                if (matched) {
+                    try {
+                        long mtime = Files.getLastModifiedTime(jar).toMillis();
+                        if (mtime > bestMtime) {
+                            bestMtime = mtime;
+                            bestMatch = jar;
+                        }
+                    } catch (IOException ignored) {
+                        if (bestMatch == null) bestMatch = jar;
+                    }
                 }
             }
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Plugins folder scan failed: " + e.getMessage()));
         }
-        return Optional.empty();
+        return Optional.ofNullable(bestMatch);
     }
 
     /**
@@ -310,12 +380,17 @@ public class ShutdownHandler {
      * {@code <plugins>/<ConfigName>-<version>.jar} so that the filename stays in sync
      * with the configured name and current version.
      */
-    private Path resolveTargetJar(PluginEntry entry, String newVersion) {
+    private Path resolveTargetJar(PluginEntry entry, String safeVersion) {
         // Known path (e.g. the updater's own JAR) — keep as-is
         Path known = knownJarPaths.get(entry.getName());
         if (known != null) return known;
 
         // Always use <ConfigName>-<version>.jar so the filename matches the config
-        return pluginsFolder.resolve(entry.getName() + "-" + newVersion + ".jar");
+        return pluginsFolder.resolve(sanitizeFilename(entry.getName()) + "-" + safeVersion + ".jar");
+    }
+
+    /** Strips characters that are unsafe in filenames or could cause path traversal. */
+    private static String sanitizeFilename(String s) {
+        return s.replaceAll("[\0/\\\\:*?\"<>|]", "_");
     }
 }

@@ -1,6 +1,7 @@
 package net.gravijet.pluginupdater.core;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.gravijet.pluginupdater.core.model.PluginEntry;
@@ -12,7 +13,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.logging.Logger;
@@ -64,30 +65,29 @@ public class ModrinthUpdateChecker {
         // GET /project/{slug}/version — returns JSON array, newest first
         String apiUrl = API_BASE + entry.getRepo() + "/version";
         JsonArray versions;
+        HttpURLConnection conn = null;
         try {
-            HttpURLConnection conn = openConnection(apiUrl, entry.getAccessToken());
+            conn = openConnection(apiUrl, entry.getAccessToken());
             int status = conn.getResponseCode();
 
             if (status == 404) {
-                conn.disconnect();
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth project not found: &e"
                     + entry.getRepo() + " &7— check the &erepo&7 field in config.yml."));
                 return Optional.empty();
             }
             if (status != 200) {
-                conn.disconnect();
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API returned HTTP &e" + status
                     + " &7for &f" + entry.getName() + "&7."));
                 return Optional.empty();
             }
 
-            @SuppressWarnings("deprecation")
-            JsonArray parsed = new JsonParser().parse(readBody(conn)).getAsJsonArray();
-            versions = parsed;
+            versions = JsonParser.parseString(readBody(conn)).getAsJsonArray();
         } catch (Exception e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Modrinth update check failed for &f"
-                + entry.getName() + "&7: " + e.getMessage()));
+                + entry.getName() + "&7: " + e));
             return Optional.empty();
+        } finally {
+            if (conn != null) conn.disconnect();
         }
 
         if (versions.size() == 0) {
@@ -99,12 +99,16 @@ public class ModrinthUpdateChecker {
         // Walk versions newest-first; pick the first file that matches the asset pattern.
         for (int v = 0; v < versions.size(); v++) {
             JsonObject version = versions.get(v).getAsJsonObject();
+            if (!version.has("id") || !version.has("version_number") || !version.has("files")) continue;
             String versionId     = version.get("id").getAsString();
             String versionNumber = version.get("version_number").getAsString();
-            JsonArray files      = version.getAsJsonArray("files");
+            JsonElement filesEl  = version.get("files");
+            if (!filesEl.isJsonArray()) continue;
+            JsonArray files      = filesEl.getAsJsonArray();
 
             for (int f = 0; f < files.size(); f++) {
                 JsonObject file    = files.get(f).getAsJsonObject();
+                if (!file.has("filename") || !file.has("url")) continue;
                 String filename    = file.get("filename").getAsString();
                 boolean isPrimary  = file.has("primary") && file.get("primary").getAsBoolean();
 
@@ -136,7 +140,12 @@ public class ModrinthUpdateChecker {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn;
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Malformed URL: " + url, e);
+        }
         conn.setRequestMethod("GET");
         conn.setRequestProperty("Accept", "application/json");
         conn.setRequestProperty("User-Agent", "PluginUpdater/1.0 (github.com/gravijetnet/PluginUpdater)");

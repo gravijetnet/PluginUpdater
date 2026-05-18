@@ -1,6 +1,7 @@
 package net.gravijet.pluginupdater.core;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.gravijet.pluginupdater.core.model.PluginEntry;
@@ -12,7 +13,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
 import java.util.logging.Logger;
@@ -57,49 +58,47 @@ public class GitHubUpdateChecker {
 
         // First attempt: fetch release with tag "latest"
         String apiUrl = API_BASE + entry.getRepo() + "/releases/tags/latest";
+        HttpURLConnection firstConn = null;
         try {
-            HttpURLConnection conn = openConnection(apiUrl, entry.getAccessToken());
-            int status = conn.getResponseCode();
+            firstConn = openConnection(apiUrl, entry.getAccessToken());
+            int status = firstConn.getResponseCode();
             if (status == 200) {
-                @SuppressWarnings("deprecation")
-                JsonObject potential = new JsonParser().parse(readBody(conn)).getAsJsonObject();
+                JsonObject potential = JsonParser.parseString(readBody(firstConn)).getAsJsonObject();
                 if (!potential.has("message")) {
                     release = potential;
                 }
-            } else if (status == 404) {
-                conn.disconnect(); // tag "latest" not found — fall through to list-based lookup
-            } else {
-                conn.disconnect();
+            } else if (status != 404) {
+                // 404 means the "latest" tag doesn't exist — fall through to list-based lookup
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
                     + " &7for tag 'latest' of &f" + entry.getName() + "&7."));
             }
         } catch (Exception e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Failed to fetch tag 'latest' for &f" + entry.getName()
-                + "&7: " + e.getMessage() + " — falling back to latest release."));
+                + "&7: " + e + " — falling back to latest release."));
+        } finally {
+            if (firstConn != null) firstConn.disconnect();
         }
 
         // If we haven't obtained a release yet, fetch the list of releases and pick the newest
         if (release == null) {
             String listUrl = API_BASE + entry.getRepo() + "/releases?per_page=100&page=1";
+            HttpURLConnection listConn = null;
             try {
-                HttpURLConnection conn = openConnection(listUrl, entry.getAccessToken());
-                int status = conn.getResponseCode();
+                listConn = openConnection(listUrl, entry.getAccessToken());
+                int status = listConn.getResponseCode();
 
                 if (status == 404) {
-                    conn.disconnect();
                     logger.warning(CC.c("&c[PluginUpdater] &7Repository not found: &e" + entry.getRepo()
                         + " &7— check the &erepo&7 field in config.yml."));
                     return Optional.empty();
                 }
                 if (status != 200) {
-                    conn.disconnect();
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
                         + " &7for &f" + entry.getName() + "&7."));
                     return Optional.empty();
                 }
 
-                @SuppressWarnings("deprecation")
-                JsonArray releases = new JsonParser().parse(readBody(conn)).getAsJsonArray();
+                JsonArray releases = JsonParser.parseString(readBody(listConn)).getAsJsonArray();
 
                 if (releases.size() == 0) {
                     logger.warning(CC.c("&c[PluginUpdater] &7No releases found for &f" + entry.getName()
@@ -110,7 +109,7 @@ public class GitHubUpdateChecker {
                 // Search for a release with tag "latest" (could be a pre-release or draft)
                 for (int i = 0; i < releases.size(); i++) {
                     JsonObject potential = releases.get(i).getAsJsonObject();
-                    if ("latest".equals(potential.get("tag_name").getAsString())) {
+                    if (potential.has("tag_name") && "latest".equals(potential.get("tag_name").getAsString())) {
                         release = potential;
                         break;
                     }
@@ -122,93 +121,95 @@ public class GitHubUpdateChecker {
                 }
             } catch (Exception e) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Update check failed for &f" + entry.getName()
-                    + "&7: " + e.getMessage()));
+                    + "&7: " + e));
                 return Optional.empty();
+            } finally {
+                if (listConn != null) listConn.disconnect();
             }
         }
 
         // At this point, release is guaranteed non-null
+        if (!release.has("tag_name")) {
+            logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub release for &f"
+                + entry.getName() + " &7(missing tag_name)."));
+            return Optional.empty();
+        }
         String latestTag = release.get("tag_name").getAsString();
 
-            // Find the release asset whose filename matches the configured glob
-            JsonArray assets = release.getAsJsonArray("assets");
+        JsonElement assetsEl = release.get("assets");
+        if (assetsEl == null || !assetsEl.isJsonArray()) return Optional.empty();
+        JsonArray assets = assetsEl.getAsJsonArray();
+
+        // Find the release asset whose filename matches the configured glob
+        for (int i = 0; i < assets.size(); i++) {
+            JsonObject asset = assets.get(i).getAsJsonObject();
+            if (!asset.has("name") || !asset.has("id") || !asset.has("updated_at")) continue;
+            String assetName = asset.get("name").getAsString();
+
+            if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) continue;
+
+            long   assetId       = asset.get("id").getAsLong();
+            // Use the API asset endpoint — more reliable than browser_download_url for both
+            // public and private repos; auth header is forwarded only on the initial request.
+            String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
+            // updated_at changes whenever the asset is re-uploaded, even under the same tag.
+            String assetUpdatedAt = asset.get("updated_at").getAsString();
+
+            if (assetUpdatedAt.equals(storedKey)) {
+                // Plugin is up to date, no log message to avoid spam
+                return Optional.empty();
+            }
+
+            return Optional.of(new UpdateInfo(
+                entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
+        }
+
+        // No asset matched the configured glob
+        // Try fallback: if pattern contains "latest", look for any jar asset containing plugin name
+        boolean patternContainsLatest = entry.getAssetPattern().toLowerCase().contains("latest");
+        if (patternContainsLatest) {
+            // Trying fallback asset detection, no log to avoid spam
             for (int i = 0; i < assets.size(); i++) {
                 JsonObject asset = assets.get(i).getAsJsonObject();
+                if (!asset.has("name") || !asset.has("id") || !asset.has("updated_at")) continue;
                 String assetName = asset.get("name").getAsString();
 
-                if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) continue;
+                // Fallback pattern: asset ends with .jar and contains entry name (case-insensitive)
+                if (assetName.toLowerCase().endsWith(".jar") &&
+                    (assetName.toLowerCase().contains(entry.getName().toLowerCase()) ||
+                     assetName.toLowerCase().contains(entry.getRepo().toLowerCase().replace("/", "-")))) {
 
-                long   assetId       = asset.get("id").getAsLong();
-                // Use the API asset endpoint — more reliable than browser_download_url for both
-                // public and private repos; auth header is forwarded only on the initial request.
-                String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
-                // updated_at changes whenever the asset is re-uploaded, even under the same tag.
-                String assetUpdatedAt = asset.get("updated_at").getAsString();
+                    long   assetId       = asset.get("id").getAsLong();
+                    String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
+                    String assetUpdatedAt = asset.get("updated_at").getAsString();
 
-                if (assetUpdatedAt.equals(storedKey)) {
-                    // Plugin is up to date, no log message to avoid spam
-                    return Optional.empty();
-                }
-
-                if (storedKey != null) {
-                    // Update available, no log to avoid spam
-                } else {
-                    // Initialising, no log to avoid spam
-                }
-
-                return Optional.of(new UpdateInfo(
-                    entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
-            }
-
-            // No asset matched the configured glob
-            // Try fallback: if pattern contains "latest", look for any jar asset containing plugin name
-            boolean patternContainsLatest = entry.getAssetPattern().toLowerCase().contains("latest");
-            if (patternContainsLatest) {
-                // Trying fallback asset detection, no log to avoid spam
-                for (int i = 0; i < assets.size(); i++) {
-                    JsonObject asset = assets.get(i).getAsJsonObject();
-                    String assetName = asset.get("name").getAsString();
-
-                    // Fallback pattern: asset ends with .jar and contains entry name (case-insensitive)
-                    if (assetName.toLowerCase().endsWith(".jar") &&
-                        (assetName.toLowerCase().contains(entry.getName().toLowerCase()) ||
-                         assetName.toLowerCase().contains(entry.getRepo().toLowerCase().replace("/", "-")))) {
-
-                        // Found fallback asset, no log to avoid spam
-
-                        long   assetId       = asset.get("id").getAsLong();
-                        String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
-                        String assetUpdatedAt = asset.get("updated_at").getAsString();
-
-                        if (assetUpdatedAt.equals(storedKey)) {
-                            // Plugin is up to date, no log message to avoid spam
-                            return Optional.empty();
-                        }
-
-                        if (storedKey != null) {
-                            // Update available, no log to avoid spam
-                        } else {
-                            // Initialising, no log to avoid spam
-                        }
-
-                        return Optional.of(new UpdateInfo(
-                            entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
+                    if (assetUpdatedAt.equals(storedKey)) {
+                        return Optional.empty();
                     }
+
+                    return Optional.of(new UpdateInfo(
+                        entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
                 }
-                logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f" + entry.getName()
-                    + "&7. Please check asset-pattern in config.yml."));
-            } else {
-                logger.warning(CC.c("&c[PluginUpdater] &7No asset matching &e'" + entry.getAssetPattern()
-                    + "'&7 in release &e" + latestTag + " &7for &f" + entry.getName()
-                    + "&7. Check &easset-pattern&7 in config.yml."));
             }
-            return Optional.empty();
+            logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f" + entry.getName()
+                + "&7. Please check asset-pattern in config.yml."));
+        } else {
+            logger.warning(CC.c("&c[PluginUpdater] &7No asset matching &e'" + entry.getAssetPattern()
+                + "'&7 in release &e" + latestTag + " &7for &f" + entry.getName()
+                + "&7. Check &easset-pattern&7 in config.yml."));
+        }
+        return Optional.empty();
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn;
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Malformed URL: " + url, e);
+        }
         conn.setRequestMethod("GET");
         conn.setRequestProperty("Accept", "application/vnd.github+json");
         conn.setRequestProperty("X-GitHub-Api-Version", "2022-11-28");

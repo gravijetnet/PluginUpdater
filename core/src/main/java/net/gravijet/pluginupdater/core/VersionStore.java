@@ -1,7 +1,9 @@
 package net.gravijet.pluginupdater.core;
 
 import net.gravijet.pluginupdater.core.util.CC;
+import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -49,12 +51,12 @@ public class VersionStore {
             return;
         }
 
-        Yaml yaml = new Yaml();
+        Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
         try (InputStream is = Files.newInputStream(file)) {
             Map<String, Object> data = yaml.load(is);
             if (data != null) {
                 data.forEach((k, v) -> {
-                    if (v != null) versions.put(k, v.toString());
+                    if (k != null && v != null) versions.put(k, v.toString());
                 });
             }
         }
@@ -105,8 +107,24 @@ public class VersionStore {
         }
     }
 
-    /** Wraps {@code s} in YAML double-quoted style, escaping {@code \} and {@code "}. */
+    /** Wraps {@code s} in YAML double-quoted style, escaping all characters that would
+     *  produce invalid YAML if left literal inside a double-quoted scalar. */
     private static String quoteYaml(String s) {
-        return '"' + s.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+        StringBuilder sb = new StringBuilder(s.length() + 2);
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"'  -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\0' -> sb.append("\\0");
+                default   -> sb.append(c);
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 }

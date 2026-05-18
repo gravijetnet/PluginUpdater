@@ -6,7 +6,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
-import java.net.URL;
+import java.net.URI;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -40,11 +40,11 @@ public class FileUpdater {
      * @return path to the temp file on success, or {@code null} if the download failed
      */
     public Path downloadToTemp(String downloadUrl, String displayName, String accessToken) {
+        HttpURLConnection conn = null;
         try {
             // GitHub redirects asset API endpoint → S3.
             // We follow redirects manually so the auth header is not leaked to S3.
-            HttpURLConnection conn = openGet(downloadUrl, accessToken);
-            conn = followRedirects(conn, null); // auth not forwarded to redirects (e.g. S3)
+            conn = followRedirects(openGet(downloadUrl, accessToken), null);
 
             int status = conn.getResponseCode();
             if (status != 200) {
@@ -54,16 +54,28 @@ public class FileUpdater {
                 return null;
             }
 
+            long contentLength = conn.getContentLengthLong(); // -1 if server omits header
+
             Path temp = Files.createTempFile("pluginupdater-", "-" + displayName);
             boolean success = false;
             try {
+                long bytesWritten = 0;
                 try (InputStream in = conn.getInputStream();
                      OutputStream out = Files.newOutputStream(temp)) {
                     byte[] buf = new byte[16_384];
                     int n;
                     while ((n = in.read(buf)) != -1) {
                         out.write(buf, 0, n);
+                        bytesWritten += n;
                     }
+                }
+                // Validate download completeness when the server declares a Content-Length.
+                // A mismatch means the connection was dropped before all bytes arrived.
+                if (contentLength >= 0 && bytesWritten != contentLength) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
+                        + " &7was truncated: expected &e" + contentLength
+                        + " &7bytes but received &e" + bytesWritten + "&7."));
+                    return null; // success stays false → finally deletes the partial temp file
                 }
                 success = true;
                 return temp;
@@ -77,6 +89,8 @@ public class FileUpdater {
             logger.warning(CC.c("&c[PluginUpdater] &7Download error for &e" + displayName
                 + "&7: " + e.getMessage()));
             return null;
+        } finally {
+            if (conn != null) conn.disconnect();
         }
     }
 
@@ -130,7 +144,12 @@ public class FileUpdater {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     private static HttpURLConnection openGet(String url, String token) throws IOException {
-        HttpURLConnection conn = (HttpURLConnection) new URL(url).openConnection();
+        HttpURLConnection conn;
+        try {
+            conn = (HttpURLConnection) URI.create(url).toURL().openConnection();
+        } catch (IllegalArgumentException e) {
+            throw new IOException("Malformed URL: " + url, e);
+        }
         conn.setRequestMethod("GET");
         conn.setRequestProperty("User-Agent", "PluginUpdater/1.0");
         // Tell GitHub to return the raw binary rather than JSON asset metadata
@@ -150,15 +169,21 @@ public class FileUpdater {
      */
     private static HttpURLConnection followRedirects(HttpURLConnection conn, String tokenForRedirects)
         throws IOException {
-        int hops = 0;
-        while (hops < 10) {
-            int status = conn.getResponseCode();
-            if (status < 300 || status >= 400) break;
-            String location = conn.getHeaderField("Location");
-            if (location == null) break;
-            conn = openGet(location, tokenForRedirects);
-            hops++;
+        try {
+            int hops = 0;
+            while (hops < 10) {
+                int status = conn.getResponseCode();
+                if (status < 300 || status >= 400) break;
+                String location = conn.getHeaderField("Location");
+                if (location == null) break;
+                conn.disconnect();
+                conn = openGet(location, tokenForRedirects);
+                hops++;
+            }
+            return conn;
+        } catch (IOException e) {
+            conn.disconnect();
+            throw e;
         }
-        return conn;
     }
 }
