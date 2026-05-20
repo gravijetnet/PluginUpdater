@@ -52,14 +52,27 @@ public class VersionStore {
         }
 
         Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
+        Object root;
         try (InputStream is = Files.newInputStream(file)) {
-            Map<String, Object> data = yaml.load(is);
-            if (data != null) {
-                data.forEach((k, v) -> {
-                    if (k != null && v != null) versions.put(k, v.toString());
-                });
-            }
+            root = yaml.load(is);
+        } catch (org.yaml.snakeyaml.error.YAMLException e) {
+            throw new IOException("versions.yml contains invalid YAML: " + e.getMessage(), e);
         }
+
+        if (root == null) {
+            return; // empty store — every plugin is simply re-checked on next run
+        }
+        // A corrupt store must not disable the whole plugin: warn and start fresh
+        // (worst case is a redundant re-check). String.valueOf guards against
+        // non-string YAML keys, which would otherwise ClassCastException.
+        if (!(root instanceof Map)) {
+            logger.warning(CC.c("&c[PluginUpdater] &7versions.yml is malformed (root is not a mapping) "
+                + "— starting with an empty version store."));
+            return;
+        }
+        ((Map<?, ?>) root).forEach((k, v) -> {
+            if (k != null && v != null) versions.put(String.valueOf(k), v.toString());
+        });
     }
 
     // ── Public API ─────────────────────────────────────────────────────────

@@ -116,25 +116,37 @@ public class VelocityPlugin {
 
     /**
      * Builds a {@link java.util.logging.Logger} that forwards records to the given
-     * SLF4J logger, stripping Minecraft color codes in the process.
+     * SLF4J logger, stripping ANSI color codes in the process.
      */
     private static java.util.logging.Logger buildJulBridge(Logger slf4j) {
         java.util.logging.Logger jul = java.util.logging.Logger.getLogger("PluginUpdater");
         jul.setUseParentHandlers(false);
+        // Remove any previously registered handlers so that re-initialisation (e.g. during
+        // integration tests or a future proxy reload) does not cause duplicate log output.
+        for (java.util.logging.Handler h : jul.getHandlers()) jul.removeHandler(h);
 
         jul.addHandler(new Handler() {
             @Override
             public void publish(LogRecord record) {
                 if (record == null || !isLoggable(record)) return;
-                String msg = CC.strip(record.getMessage()); // strip §x color codes
-                Level lvl  = record.getLevel();
+                // JUL supports MessageFormat-style parameterised messages ({0}, {1}, …).
+                // Substitute them before forwarding so SLF4J sees the fully expanded text.
+                String raw = record.getMessage();
+                Object[] params = record.getParameters();
+                if (params != null && params.length > 0) {
+                    try { raw = java.text.MessageFormat.format(raw, params); }
+                    catch (Exception ignored) {}
+                }
+                String    msg    = CC.strip(raw);
+                Level     lvl    = record.getLevel();
+                Throwable thrown = record.getThrown();
 
                 if (lvl.intValue() >= Level.SEVERE.intValue()) {
-                    slf4j.error(msg);
+                    if (thrown != null) slf4j.error(msg, thrown); else slf4j.error(msg);
                 } else if (lvl.intValue() >= Level.WARNING.intValue()) {
-                    slf4j.warn(msg);
+                    if (thrown != null) slf4j.warn(msg, thrown); else slf4j.warn(msg);
                 } else {
-                    slf4j.info(msg);
+                    if (thrown != null) slf4j.info(msg, thrown); else slf4j.info(msg);
                 }
             }
 

@@ -101,15 +101,25 @@ public class ConfigManager {
         }
 
         Yaml yaml = new Yaml(new SafeConstructor(new LoaderOptions()));
-        Map<String, Object> data;
+        Object root;
         try (InputStream is = Files.newInputStream(configFile)) {
-            data = yaml.load(is);
+            root = yaml.load(is);
+        } catch (org.yaml.snakeyaml.error.YAMLException e) {
+            throw new IOException("config.yml contains invalid YAML: " + e.getMessage(), e);
         }
 
-        if (data == null) {
+        if (root == null) {
             logger.warning(CC.c("&c[PluginUpdater] &7config.yml appears empty — no plugins will be tracked."));
             return;
         }
+        // A hand-edited config whose root is a list/scalar would otherwise throw an
+        // uncaught ClassCastException from the (Map) cast — surfaced here as the IOException
+        // the platform entry points already handle gracefully.
+        if (!(root instanceof Map)) {
+            throw new IOException("config.yml root must be a YAML mapping (key: value), but found "
+                + root.getClass().getSimpleName() + ".");
+        }
+        Map<String, Object> data = (Map<String, Object>) root;
 
         // Global GitHub token
         Object tok = data.get("github-access-token");

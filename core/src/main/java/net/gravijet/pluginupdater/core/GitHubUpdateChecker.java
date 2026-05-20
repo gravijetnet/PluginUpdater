@@ -54,6 +54,13 @@ public class GitHubUpdateChecker {
      * </ul>
      */
     public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
+        if (!isValidGitHubRepo(entry.getRepo())) {
+            logger.warning(CC.c("&c[PluginUpdater] &7Invalid GitHub repo for &f" + entry.getName()
+                + " &7— expected 'owner/repo' with safe characters, got: &e"
+                + entry.getRepo() + "&7. Check &erepo&7 in config.yml."));
+            return Optional.empty();
+        }
+
         JsonObject release = null;
 
         // First attempt: fetch release with tag "latest"
@@ -101,6 +108,17 @@ public class GitHubUpdateChecker {
                         + " &7— check the &erepo&7 field in config.yml."));
                     return Optional.empty();
                 }
+                if (status == 401 || status == 403) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
+                        + " &7for &f" + entry.getName()
+                        + " &7— check your &eaccess-token&7 in config.yml."));
+                    return Optional.empty();
+                }
+                if (status == 429) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7GitHub API rate-limited (HTTP 429) for &f"
+                        + entry.getName() + " &7— try again later."));
+                    return Optional.empty();
+                }
                 if (status != 200) {
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
                         + " &7for &f" + entry.getName() + "&7."));
@@ -144,6 +162,11 @@ public class GitHubUpdateChecker {
             return Optional.empty();
         }
         String latestTag = release.get("tag_name").getAsString();
+        if (latestTag.isEmpty()) {
+            logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub release for &f"
+                + entry.getName() + " &7(empty tag_name)."));
+            return Optional.empty();
+        }
 
         JsonElement assetsEl = release.get("assets");
         if (assetsEl == null || !assetsEl.isJsonArray()) return Optional.empty();
@@ -211,6 +234,16 @@ public class GitHubUpdateChecker {
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
+
+    /**
+     * Returns {@code true} if {@code repo} is a safe "owner/repo" string that can be
+     * appended directly to the GitHub API base URL.  Rejects characters that would escape
+     * the URL path segment and corrupt the request ({@code ?}, {@code #}, {@code &}, etc.).
+     * GitHub owner/repo names consist of alphanumerics, hyphens, underscores, and dots.
+     */
+    private static boolean isValidGitHubRepo(String repo) {
+        return repo != null && repo.matches("[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+");
+    }
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
         HttpURLConnection conn;

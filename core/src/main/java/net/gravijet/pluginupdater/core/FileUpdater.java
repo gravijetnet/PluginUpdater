@@ -23,6 +23,9 @@ import java.util.logging.Logger;
  */
 public class FileUpdater {
 
+    /** Safety cap — prevents runaway downloads from exhausting disk space. */
+    private static final long MAX_DOWNLOAD_BYTES = 256L * 1024 * 1024; // 256 MB
+
     private final Logger logger;
 
     public FileUpdater(Logger logger) {
@@ -34,12 +37,18 @@ public class FileUpdater {
     /**
      * Downloads the JAR at {@code downloadUrl} to a temporary file.
      *
-     * @param downloadUrl the {@code browser_download_url} from the GitHub release asset
-     * @param displayName human-readable name used in log messages (e.g. {@code "EssentialsX-2.20.jar"})
-     * @param accessToken GitHub token, or {@code null} for public assets
+     * @param downloadUrl   the {@code browser_download_url} from the GitHub release asset
+     * @param destinationDir directory the temp file is created in — must be on the same
+     *                       filesystem as the final target so {@link #atomicReplace} can
+     *                       perform a true atomic move (the system temp dir is typically
+     *                       on a different volume, which silently degrades the move to a
+     *                       non-atomic copy and orphans partial files)
+     * @param displayName   human-readable name used in log messages (e.g. {@code "EssentialsX-2.20.jar"})
+     * @param accessToken   GitHub token, or {@code null} for public assets
      * @return path to the temp file on success, or {@code null} if the download failed
      */
-    public Path downloadToTemp(String downloadUrl, String displayName, String accessToken) {
+    public Path downloadToTemp(String downloadUrl, Path destinationDir,
+                               String displayName, String accessToken) {
         HttpURLConnection conn = null;
         try {
             // GitHub redirects asset API endpoint → S3.
@@ -55,8 +64,18 @@ public class FileUpdater {
             }
 
             long contentLength = conn.getContentLengthLong(); // -1 if server omits header
+            if (contentLength > MAX_DOWNLOAD_BYTES) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
+                    + " &7refused: Content-Length &e" + contentLength
+                    + " &7bytes exceeds the &e" + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + " MB&7 safety limit."));
+                return null;
+            }
 
-            Path temp = Files.createTempFile("pluginupdater-", "-" + displayName);
+            // Create the temp file in the destination directory (same filesystem as the
+            // final target) so atomicReplace() can do a real atomic move. The ".tmp"
+            // suffix keeps partial/in-flight files out of the server's "*.jar" plugin
+            // scan and out of ShutdownHandler#findExistingJar.
+            Path temp = Files.createTempFile(destinationDir, "pluginupdater-", "-" + displayName + ".tmp");
             boolean success = false;
             try {
                 long bytesWritten = 0;
@@ -67,6 +86,12 @@ public class FileUpdater {
                     while ((n = in.read(buf)) != -1) {
                         out.write(buf, 0, n);
                         bytesWritten += n;
+                        if (bytesWritten > MAX_DOWNLOAD_BYTES) {
+                            logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
+                                + " &7aborted: exceeded the &e"
+                                + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + " MB&7 safety limit."));
+                            return null; // success stays false → finally deletes the partial temp file
+                        }
                     }
                 }
                 // Validate download completeness when the server declares a Content-Length.
@@ -136,7 +161,9 @@ public class FileUpdater {
                 + " &7(file may be locked — common on Windows): " + e.getMessage()));
             // 3. Best-effort: schedule deletion so the JVM removes the old file on exit.
             //    The new JAR stays in its temp location; the operator must handle it manually.
+            //    Also schedule the temp file itself for cleanup so failed attempts don't accumulate.
             targetPath.toFile().deleteOnExit();
+            sourceTempFile.toFile().deleteOnExit();
             return false;
         }
     }

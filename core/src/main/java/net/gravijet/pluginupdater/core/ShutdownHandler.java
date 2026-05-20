@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -119,7 +120,14 @@ public class ShutdownHandler {
                 return t;
             });
             scheduler.scheduleAtFixedRate(
-                () -> runCheckSync("periodic"),
+                () -> {
+                    try {
+                        runCheckSync("periodic");
+                    } catch (Exception e) {
+                        logger.log(Level.WARNING,
+                            CC.c("&c[PluginUpdater] &7Periodic check threw unexpected exception."), e);
+                    }
+                },
                 intervalMinutes, intervalMinutes, TimeUnit.MINUTES
             );
             // Periodic checks enabled, no log to avoid spam
@@ -167,6 +175,7 @@ public class ShutdownHandler {
                 interrupted = true;
             }
         }
+        startupThread = null;
         runShutdownUpdates();
         if (interrupted) Thread.currentThread().interrupt();
     }
@@ -199,8 +208,8 @@ public class ShutdownHandler {
             try {
                 processPlugin(entry);
             } catch (Exception e) {
-                logger.warning(CC.c("&c[PluginUpdater] &7Unexpected error for &f"
-                    + entry.getName() + "&7: " + e));
+                logger.log(Level.WARNING,
+                    CC.c("&c[PluginUpdater] &7Unexpected error for &f" + entry.getName() + "&7."), e);
             }
         }
 
@@ -231,6 +240,7 @@ public class ShutdownHandler {
                 worker.interrupt();
             }
         } catch (InterruptedException e) {
+            worker.interrupt(); // stop the non-daemon worker so the JVM can exit
             Thread.currentThread().interrupt();
             logger.warning(CC.c("&c[PluginUpdater] &7Shutdown hook was interrupted."));
         }
@@ -291,7 +301,7 @@ public class ShutdownHandler {
         String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
             ? null : entry.getAccessToken();
         Path tempFile = fileUpdater.downloadToTemp(
-            update.getDownloadUrl(), tempName, downloadToken);
+            update.getDownloadUrl(), pluginsFolder, tempName, downloadToken);
 
         if (tempFile == null) return; // download failed, already logged
 

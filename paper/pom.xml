@@ -36,21 +36,22 @@
         </dependency>
 
         <!--
-            Paper already bundles Gson and SnakeYAML.
-            Declare them as "provided" so the compiler can resolve core's
-            transitive references without shading duplicates into the fat JAR.
+            Paper 1.8.8 bundles Gson 2.2.4 (too old — JsonParser.parseString() requires 2.8.6+)
+            and SnakeYAML 1.x (too old — LoaderOptions requires 2.0+).
+            Shade and relocate both so we always use known-good versions regardless of what
+            the server bundles, and to avoid classpath conflicts with the server's copies.
         -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
-            <scope>provided</scope>
+            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.yaml</groupId>
             <artifactId>snakeyaml</artifactId>
             <version>2.2</version>
-            <scope>provided</scope>
+            <scope>compile</scope>
         </dependency>
     </dependencies>
 
@@ -65,12 +66,25 @@
                         <goals><goal>shade</goal></goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <!-- Only shade the core module; Paper provides Gson + SnakeYAML -->
+                            <!-- Shade core + Gson + SnakeYAML; relocate to avoid conflicts
+                                 with the server's bundled (older) copies of these libraries. -->
                             <artifactSet>
                                 <includes>
                                     <include>net.gravijet.pluginupdater:core</include>
+                                    <include>com.google.code.gson:gson</include>
+                                    <include>org.yaml:snakeyaml</include>
                                 </includes>
                             </artifactSet>
+                            <relocations>
+                                <relocation>
+                                    <pattern>com.google.gson</pattern>
+                                    <shadedPattern>net.gravijet.pluginupdater.shaded.gson</shadedPattern>
+                                </relocation>
+                                <relocation>
+                                    <pattern>org.yaml.snakeyaml</pattern>
+                                    <shadedPattern>net.gravijet.pluginupdater.shaded.snakeyaml</shadedPattern>
+                                </relocation>
+                            </relocations>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -79,6 +93,8 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <exclude>plugin.yml</exclude>
+                                        <exclude>bungee.yml</exclude>
                                     </excludes>
                                 </filter>
                             </filters>
