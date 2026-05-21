@@ -133,7 +133,9 @@ public class ConfigManager {
         Object interval = data.get("check-interval-minutes");
         if (interval != null) {
             if (interval instanceof Number) {
-                checkIntervalMinutes = Math.max(0, ((Number) interval).intValue());
+                // Use longValue() first to avoid silent int overflow for large config values
+                long raw = ((Number) interval).longValue();
+                checkIntervalMinutes = (int) Math.max(0L, Math.min(raw, (long) Integer.MAX_VALUE));
             } else {
                 try {
                     checkIntervalMinutes = Math.max(0, Integer.parseInt(interval.toString().trim()));

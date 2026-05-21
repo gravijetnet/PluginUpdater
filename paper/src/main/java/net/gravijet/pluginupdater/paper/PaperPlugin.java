@@ -42,7 +42,7 @@ public class PaperPlugin extends JavaPlugin {
             configManager.load();
             versionStore.load();
         } catch (IOException e) {
-            log.severe(CC.c("&c[PluginUpdater] &7Failed to load configuration: " + e.getMessage()));
+            log.severe(CC.c("&c[PluginUpdater] &7Failed to load configuration: " + e));
             log.severe(CC.c("&c[PluginUpdater] &7Disabling plugin."));
             getServer().getPluginManager().disablePlugin(this);
             return;

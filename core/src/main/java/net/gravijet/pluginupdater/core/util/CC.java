@@ -10,13 +10,19 @@ package net.gravijet.pluginupdater.core.util;
  */
 public final class CC {
 
-    private static final String ESC = "\u001B[";
+    // ESC (U+001B / ASCII 27) is the start byte of every ANSI escape sequence.
+    private static final char ESC_CHAR = 27;
+    private static final String ESC = ESC_CHAR + "[";
+
+    // Regex that matches any complete ANSI CSI escape sequence (ESC [ ... <letter>).
+    // Uses a letter terminator instead of only 'm' so non-SGR sequences are also stripped.
+    private static final String ANSI_PATTERN = ESC_CHAR + "\\[[^a-zA-Z]*[a-zA-Z]";
 
     private CC() {}
 
     /**
      * Translates {@code &} color codes to ANSI escape sequences.
-     * Appends a reset ({@code \u001B[0m}) at the end if any code was translated.
+     * Appends a reset ({@code ESC[0m}) at the end if any code was translated.
      */
     public static String c(String msg) {
         if (msg == null) return null;
@@ -39,10 +45,23 @@ public final class CC {
         return sb.toString();
     }
 
-    /** Strips ANSI escape sequences from a string (e.g. for plain log output on Velocity). */
+    /**
+     * Strips ANSI escape sequences from a string (e.g. for plain log output on Velocity).
+     * Handles any CSI sequence (any letter terminator), not only SGR sequences ending in 'm'.
+     */
     public static String strip(String msg) {
         if (msg == null) return null;
-        return msg.replaceAll("\u001B\\[[^m]*m", "");
+        return msg.replaceAll(ANSI_PATTERN, "");
+    }
+
+    /**
+     * Escapes user-supplied content so {@code &X} sequences in it are not interpreted
+     * as color codes when embedded inside a {@link #c} call. Removes the {@code &}
+     * from any {@code &X} pair where {@code X} is a valid Minecraft color code character.
+     */
+    public static String safe(String s) {
+        if (s == null) return "null";
+        return s.replaceAll("&(?=[0-9a-fA-FklmnorKLMNOR])", "");
     }
 
     private static String ansiFor(char code) {

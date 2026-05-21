@@ -55,9 +55,10 @@ public class GitHubUpdateChecker {
      */
     public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
         if (!isValidGitHubRepo(entry.getRepo())) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Invalid GitHub repo for &f" + entry.getName()
+            logger.warning(CC.c("&c[PluginUpdater] &7Invalid GitHub repo for &f"
+                + CC.safe(entry.getName())
                 + " &7— expected 'owner/repo' with safe characters, got: &e"
-                + entry.getRepo() + "&7. Check &erepo&7 in config.yml."));
+                + CC.safe(entry.getRepo()) + "&7. Check &erepo&7 in config.yml."));
             return Optional.empty();
         }
 
@@ -76,79 +77,81 @@ public class GitHubUpdateChecker {
                 }
             } else if (status == 401 || status == 403) {
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
-                    + " &7for &f" + entry.getName()
+                    + " &7for &f" + CC.safe(entry.getName())
                     + " &7— check your &eaccess-token&7 in config.yml."));
                 return Optional.empty();
             } else if (status == 429) {
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API rate-limited (HTTP 429) for &f"
-                    + entry.getName() + " &7— try again later."));
+                    + CC.safe(entry.getName()) + " &7— try again later."));
                 return Optional.empty();
             } else if (status != 404) {
                 // 404 means the "latest" tag doesn't exist — fall through to list-based lookup
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
-                    + " &7for tag 'latest' of &f" + entry.getName() + "&7."));
+                    + " &7for tag 'latest' of &f" + CC.safe(entry.getName()) + "&7."));
             }
         } catch (Exception e) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Failed to fetch tag 'latest' for &f" + entry.getName()
+            logger.warning(CC.c("&c[PluginUpdater] &7Failed to fetch tag 'latest' for &f"
+                + CC.safe(entry.getName())
                 + "&7: " + e + " — falling back to latest release."));
         } finally {
             if (firstConn != null) firstConn.disconnect();
         }
 
-        // If we haven't obtained a release yet, fetch the list of releases and pick the newest
+        // If we haven't obtained a release yet, fetch the list and pick the newest.
+        // The tag endpoint above already covers the "latest" tag case; the list fallback
+        // simply grabs the most-recently-created release (releases[0] per GitHub ordering).
         if (release == null) {
-            String listUrl = API_BASE + entry.getRepo() + "/releases?per_page=100&page=1";
+            String listUrl = API_BASE + entry.getRepo() + "/releases?per_page=1&page=1";
             HttpURLConnection listConn = null;
             try {
                 listConn = openConnection(listUrl, entry.getAccessToken());
                 int status = listConn.getResponseCode();
 
                 if (status == 404) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7Repository not found: &e" + entry.getRepo()
+                    logger.warning(CC.c("&c[PluginUpdater] &7Repository not found: &e"
+                        + CC.safe(entry.getRepo())
                         + " &7— check the &erepo&7 field in config.yml."));
                     return Optional.empty();
                 }
                 if (status == 401 || status == 403) {
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
-                        + " &7for &f" + entry.getName()
+                        + " &7for &f" + CC.safe(entry.getName())
                         + " &7— check your &eaccess-token&7 in config.yml."));
                     return Optional.empty();
                 }
                 if (status == 429) {
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API rate-limited (HTTP 429) for &f"
-                        + entry.getName() + " &7— try again later."));
+                        + CC.safe(entry.getName()) + " &7— try again later."));
                     return Optional.empty();
                 }
                 if (status != 200) {
                     logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
-                        + " &7for &f" + entry.getName() + "&7."));
+                        + " &7for &f" + CC.safe(entry.getName()) + "&7."));
                     return Optional.empty();
                 }
 
                 JsonArray releases = JsonParser.parseString(readBody(listConn)).getAsJsonArray();
 
-                if (releases.size() == 0) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7No releases found for &f" + entry.getName()
-                        + "&7."));
+                if (releases.isEmpty()) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7No releases found for &f"
+                        + CC.safe(entry.getName()) + "&7."));
                     return Optional.empty();
                 }
 
-                // Search for a release with tag "latest" (could be a pre-release or draft)
-                for (int i = 0; i < releases.size(); i++) {
-                    JsonObject potential = releases.get(i).getAsJsonObject();
-                    if (potential.has("tag_name") && "latest".equals(potential.get("tag_name").getAsString())) {
-                        release = potential;
-                        break;
-                    }
+                // Take the first entry — GitHub orders by created_at descending so this is
+                // the newest release. The per_page=1 request avoids fetching 100 entries
+                // when we only need one, and avoids pagination edge cases.
+                JsonElement firstEl = releases.get(0);
+                if (!firstEl.isJsonObject()) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub releases list for &f"
+                        + CC.safe(entry.getName()) + "&7."));
+                    return Optional.empty();
                 }
+                release = firstEl.getAsJsonObject();
 
-                // If still no release, take the first one (newest by creation date)
-                if (release == null) {
-                    release = releases.get(0).getAsJsonObject();
-                }
             } catch (Exception e) {
-                logger.warning(CC.c("&c[PluginUpdater] &7Update check failed for &f" + entry.getName()
-                    + "&7: " + e));
+                logger.warning(CC.c("&c[PluginUpdater] &7Update check failed for &f"
+                    + CC.safe(entry.getName()) + "&7: " + e));
                 return Optional.empty();
             } finally {
                 if (listConn != null) listConn.disconnect();
@@ -156,15 +159,16 @@ public class GitHubUpdateChecker {
         }
 
         // At this point, release is guaranteed non-null
-        if (!release.has("tag_name")) {
+        JsonElement tagNameEl = release.get("tag_name");
+        if (tagNameEl == null || tagNameEl.isJsonNull()) {
             logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub release for &f"
-                + entry.getName() + " &7(missing tag_name)."));
+                + CC.safe(entry.getName()) + " &7(missing tag_name)."));
             return Optional.empty();
         }
-        String latestTag = release.get("tag_name").getAsString();
+        String latestTag = tagNameEl.getAsString();
         if (latestTag.isEmpty()) {
             logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub release for &f"
-                + entry.getName() + " &7(empty tag_name)."));
+                + CC.safe(entry.getName()) + " &7(empty tag_name)."));
             return Optional.empty();
         }
 
@@ -174,21 +178,27 @@ public class GitHubUpdateChecker {
 
         // Find the release asset whose filename matches the configured glob
         for (int i = 0; i < assets.size(); i++) {
-            JsonObject asset = assets.get(i).getAsJsonObject();
-            if (!asset.has("name") || !asset.has("id") || !asset.has("updated_at")) continue;
-            String assetName = asset.get("name").getAsString();
+            JsonElement el = assets.get(i);
+            if (!el.isJsonObject()) continue;
+            JsonObject asset = el.getAsJsonObject();
+            JsonElement nameEl      = asset.get("name");
+            JsonElement idEl        = asset.get("id");
+            JsonElement updatedAtEl = asset.get("updated_at");
+            if (nameEl == null || nameEl.isJsonNull()
+                    || idEl == null || idEl.isJsonNull()
+                    || updatedAtEl == null || updatedAtEl.isJsonNull()) continue;
+            String assetName = nameEl.getAsString();
 
             if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) continue;
 
-            long   assetId       = asset.get("id").getAsLong();
+            long   assetId       = idEl.getAsLong();
             // Use the API asset endpoint — more reliable than browser_download_url for both
             // public and private repos; auth header is forwarded only on the initial request.
             String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
             // updated_at changes whenever the asset is re-uploaded, even under the same tag.
-            String assetUpdatedAt = asset.get("updated_at").getAsString();
+            String assetUpdatedAt = updatedAtEl.getAsString();
 
             if (assetUpdatedAt.equals(storedKey)) {
-                // Plugin is up to date, no log message to avoid spam
                 return Optional.empty();
             }
 
@@ -200,20 +210,28 @@ public class GitHubUpdateChecker {
         // Try fallback: if pattern contains "latest", look for any jar asset containing plugin name
         boolean patternContainsLatest = entry.getAssetPattern().toLowerCase().contains("latest");
         if (patternContainsLatest) {
-            // Trying fallback asset detection, no log to avoid spam
+            String repoSuffix = entry.getRepo().toLowerCase().replace("/", "-");
+            String nameLower  = entry.getName().toLowerCase();
             for (int i = 0; i < assets.size(); i++) {
-                JsonObject asset = assets.get(i).getAsJsonObject();
-                if (!asset.has("name") || !asset.has("id") || !asset.has("updated_at")) continue;
-                String assetName = asset.get("name").getAsString();
+                JsonElement el = assets.get(i);
+                if (!el.isJsonObject()) continue;
+                JsonObject asset = el.getAsJsonObject();
+                JsonElement nameEl      = asset.get("name");
+                JsonElement idEl        = asset.get("id");
+                JsonElement updatedAtEl = asset.get("updated_at");
+                if (nameEl == null || nameEl.isJsonNull()
+                        || idEl == null || idEl.isJsonNull()
+                        || updatedAtEl == null || updatedAtEl.isJsonNull()) continue;
+                String assetName = nameEl.getAsString();
 
                 // Fallback pattern: asset ends with .jar and contains entry name (case-insensitive)
                 if (assetName.toLowerCase().endsWith(".jar") &&
-                    (assetName.toLowerCase().contains(entry.getName().toLowerCase()) ||
-                     assetName.toLowerCase().contains(entry.getRepo().toLowerCase().replace("/", "-")))) {
+                    (assetName.toLowerCase().contains(nameLower) ||
+                     assetName.toLowerCase().contains(repoSuffix))) {
 
-                    long   assetId       = asset.get("id").getAsLong();
+                    long   assetId       = idEl.getAsLong();
                     String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
-                    String assetUpdatedAt = asset.get("updated_at").getAsString();
+                    String assetUpdatedAt = updatedAtEl.getAsString();
 
                     if (assetUpdatedAt.equals(storedKey)) {
                         return Optional.empty();
@@ -223,11 +241,14 @@ public class GitHubUpdateChecker {
                         entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
                 }
             }
-            logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f" + entry.getName()
+            logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f"
+                + CC.safe(entry.getName())
                 + "&7. Please check asset-pattern in config.yml."));
         } else {
-            logger.warning(CC.c("&c[PluginUpdater] &7No asset matching &e'" + entry.getAssetPattern()
-                + "'&7 in release &e" + latestTag + " &7for &f" + entry.getName()
+            logger.warning(CC.c("&c[PluginUpdater] &7No asset matching &e'"
+                + CC.safe(entry.getAssetPattern())
+                + "'&7 in release &e" + CC.safe(latestTag) + " &7for &f"
+                + CC.safe(entry.getName())
                 + "&7. Check &easset-pattern&7 in config.yml."));
         }
         return Optional.empty();
@@ -242,7 +263,7 @@ public class GitHubUpdateChecker {
      * GitHub owner/repo names consist of alphanumerics, hyphens, underscores, and dots.
      */
     private static boolean isValidGitHubRepo(String repo) {
-        return repo != null && repo.matches("[A-Za-z0-9_.\\-]+/[A-Za-z0-9_.\\-]+");
+        return repo != null && repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
     }
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
@@ -269,7 +290,10 @@ public class GitHubUpdateChecker {
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
+            while ((line = reader.readLine()) != null) {
+                sb.append(line);
+                sb.append('\n');
+            }
             return sb.toString();
         }
     }

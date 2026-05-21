@@ -77,7 +77,7 @@ public class VelocityPlugin {
             configManager.load();
             versionStore.load();
         } catch (IOException e) {
-            slf4j.error("[PluginUpdater] Failed to load configuration: {}", e.getMessage());
+            slf4j.error("[PluginUpdater] Failed to load configuration: {}", e.toString());
             return; // do not register the hook if config is broken
         }
 
@@ -92,7 +92,7 @@ public class VelocityPlugin {
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
-            slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", e.toString());
+            slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", String.valueOf(e));
         }
 
         shutdownHandler.registerShutdownHook();
@@ -119,7 +119,9 @@ public class VelocityPlugin {
      * SLF4J logger, stripping ANSI color codes in the process.
      */
     private static java.util.logging.Logger buildJulBridge(Logger slf4j) {
-        java.util.logging.Logger jul = java.util.logging.Logger.getLogger("PluginUpdater");
+        // Use the fully-qualified package name to avoid colliding with any other plugin
+        // that happens to use a logger named "PluginUpdater".
+        java.util.logging.Logger jul = java.util.logging.Logger.getLogger("net.gravijet.pluginupdater");
         jul.setUseParentHandlers(false);
         // Remove any previously registered handlers so that re-initialisation (e.g. during
         // integration tests or a future proxy reload) does not cause duplicate log output.

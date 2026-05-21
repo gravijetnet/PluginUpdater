@@ -70,6 +70,9 @@ public class ShutdownHandler {
     /** Ensures shutdown update logic runs at most once per JVM lifecycle. */
     private final AtomicBoolean hasRun = new AtomicBoolean(false);
 
+    /** Prevents registering the JVM shutdown hook more than once. */
+    private final AtomicBoolean hookRegistered = new AtomicBoolean(false);
+
     /** Reference to the startup background thread so onDisable() can join it. */
     private volatile Thread startupThread;
 
@@ -125,7 +128,7 @@ public class ShutdownHandler {
                         runCheckSync("periodic");
                     } catch (Exception e) {
                         logger.log(Level.WARNING,
-                            CC.c("&c[PluginUpdater] &7Periodic check threw unexpected exception."), e);
+                            CC.c("&c[PluginUpdater] &7Periodic check threw unexpected exception: " + e), e);
                     }
                 },
                 intervalMinutes, intervalMinutes, TimeUnit.MINUTES
@@ -139,10 +142,10 @@ public class ShutdownHandler {
      * The hook is a safety net that fires even when the server is killed forcibly.
      */
     public void registerShutdownHook() {
+        if (!hookRegistered.compareAndSet(false, true)) return; // already registered
         Thread hook = new Thread(this::runShutdownUpdates, "PluginUpdater-ShutdownHook");
         hook.setDaemon(false);
         Runtime.getRuntime().addShutdownHook(hook);
-        // Shutdown hook registered, no log to avoid spam
     }
 
     /**
@@ -168,7 +171,8 @@ public class ShutdownHandler {
         // Without this, the startup thread could be killed mid-download by the JVM exiting,
         // leaving a partial temp file and no stored version (forcing a redundant re-download).
         Thread startup = startupThread;
-        if (startup != null && startup.isAlive()) {
+        if (startup != null) {
+            // join() on a not-yet-started or already-terminated thread returns immediately.
             try {
                 startup.join(TIMEOUT_MS);
             } catch (InterruptedException e) {
@@ -176,6 +180,14 @@ public class ShutdownHandler {
             }
         }
         startupThread = null;
+
+        // Wait for any in-progress periodic downloads to finish before the shutdown worker
+        // starts, so two worker threads never write to the same target JAR simultaneously.
+        long drainDeadline = System.currentTimeMillis() + TIMEOUT_MS;
+        while (!processingPlugins.isEmpty() && System.currentTimeMillis() < drainDeadline) {
+            try { Thread.sleep(50); } catch (InterruptedException e) { interrupted = true; break; }
+        }
+
         runShutdownUpdates();
         if (interrupted) Thread.currentThread().interrupt();
     }
@@ -191,10 +203,10 @@ public class ShutdownHandler {
             () -> runCheckSync(label),
             "PluginUpdater-" + label + "-Worker");
         worker.setDaemon(true);
+        worker.start(); // start before publishing the reference so isAlive() is always true when read
         if ("startup".equals(label)) {
             startupThread = worker;
         }
-        worker.start();
     }
 
     /** Runs update checks synchronously on the current thread. */
@@ -209,7 +221,7 @@ public class ShutdownHandler {
                 processPlugin(entry);
             } catch (Exception e) {
                 logger.log(Level.WARNING,
-                    CC.c("&c[PluginUpdater] &7Unexpected error for &f" + entry.getName() + "&7."), e);
+                    CC.c("&c[PluginUpdater] &7Unexpected error for &f" + CC.safe(entry.getName()) + "&7: " + e), e);
             }
         }
 
@@ -269,7 +281,7 @@ public class ShutdownHandler {
             if (!jarPresent) {
                 // Cases 3 & 4: JAR missing — always download
                 if (storedKey != null) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + entry.getName()
+                    logger.warning(CC.c("&c[PluginUpdater] &7JAR for &f" + CC.safe(entry.getName())
                         + " &7is missing — forcing re-download."));
                 }
                 Optional<UpdateInfo> opt = checkForUpdate(entry, null);
@@ -296,7 +308,8 @@ public class ShutdownHandler {
 
     /** Downloads the update and atomically replaces the target JAR on disk. */
     private void downloadAndReplace(PluginEntry entry, UpdateInfo update, Optional<Path> oldJar) {
-        String safeVer  = sanitizeFilename(update.getNewVersion());
+        String rawVer   = update.getNewVersion();
+        String safeVer  = sanitizeFilename(rawVer != null ? rawVer : "unknown");
         String tempName = sanitizeFilename(entry.getName()) + "-" + safeVer + ".jar";
         String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
             ? null : entry.getAccessToken();
@@ -315,7 +328,7 @@ public class ShutdownHandler {
                         Files.deleteIfExists(old);
                     } catch (IOException e) {
                         logger.warning(CC.c("&c[PluginUpdater] &7Could not remove old JAR &f"
-                            + old.getFileName() + "&7: " + e.getMessage()));
+                            + old.getFileName() + "&7: " + e));
                         old.toFile().deleteOnExit();
                     }
                 }
@@ -323,11 +336,12 @@ public class ShutdownHandler {
 
             versions.setVersion(entry.getName(), update.getStoreKey());
 
-            logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + entry.getName()
-                + " &7updated to &a" + update.getNewVersion()
+            logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + CC.safe(entry.getName())
+                + " &7updated to &a" + CC.safe(rawVer != null ? rawVer : "unknown")
                 + " &7(active on next start)"));
         } else {
-            logger.warning(CC.c("&c[PluginUpdater] &7Could not install update for &f" + entry.getName()
+            logger.warning(CC.c("&c[PluginUpdater] &7Could not install update for &f"
+                + CC.safe(entry.getName())
                 + " &7\u2014 new JAR saved at: &f" + tempFile
                 + " &7(copy it manually to the plugins folder)"));
         }
@@ -350,9 +364,10 @@ public class ShutdownHandler {
         String versionedPrefix = nameLower + "-";
         Path bestMatch = null;
         long bestMtime = -1;
-        try (DirectoryStream<Path> stream = Files.newDirectoryStream(pluginsFolder, "*.jar")) {
+        try (DirectoryStream<Path> stream = Files.newDirectoryStream(pluginsFolder)) {
             for (Path jar : stream) {
                 String fname = jar.getFileName().toString().toLowerCase();
+                if (!fname.endsWith(".jar")) continue; // manual filter — case-insensitive on all OSes
                 boolean matched = false;
                 if (fname.equals(nameLower + ".jar")) {
                     matched = true;
@@ -377,7 +392,7 @@ public class ShutdownHandler {
                 }
             }
         } catch (IOException e) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Plugins folder scan failed: " + e.getMessage()));
+            logger.warning(CC.c("&c[PluginUpdater] &7Plugins folder scan failed: " + e));
         }
         return Optional.ofNullable(bestMatch);
     }

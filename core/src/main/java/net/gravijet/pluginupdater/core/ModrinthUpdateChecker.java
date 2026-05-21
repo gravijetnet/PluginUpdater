@@ -1,6 +1,7 @@
 package net.gravijet.pluginupdater.core;
 
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import net.gravijet.pluginupdater.core.model.PluginEntry;
@@ -62,9 +63,10 @@ public class ModrinthUpdateChecker {
      */
     public Optional<UpdateInfo> checkForUpdate(PluginEntry entry, String storedKey) {
         if (!isValidModrinthProject(entry.getRepo())) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Invalid Modrinth project ID for &f" + entry.getName()
-                + " &7— expected an alphanumeric slug (e.g. 'sodium'), got: &e"
-                + entry.getRepo() + "&7. Check &erepo&7 in config.yml."));
+            logger.warning(CC.c("&c[PluginUpdater] &7Invalid Modrinth project ID for &f"
+                + CC.safe(entry.getName())
+                + " &7— expected a slug like 'sodium' (letters, numbers, hyphens), got: &e"
+                + CC.safe(entry.getRepo()) + "&7. Check &erepo&7 in config.yml."));
             return Optional.empty();
         }
 
@@ -78,77 +80,103 @@ public class ModrinthUpdateChecker {
 
             if (status == 404) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth project not found: &e"
-                    + entry.getRepo() + " &7— check the &erepo&7 field in config.yml."));
+                    + CC.safe(entry.getRepo()) + " &7— check the &erepo&7 field in config.yml."));
                 return Optional.empty();
             }
             if (status == 401 || status == 403) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API returned HTTP &e" + status
-                    + " &7for &f" + entry.getName()
+                    + " &7for &f" + CC.safe(entry.getName())
                     + " &7— check your &eaccess-token&7 in config.yml."));
                 return Optional.empty();
             }
             if (status == 429) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API rate-limited (HTTP 429) for &f"
-                    + entry.getName() + " &7— try again later or add an access token."));
+                    + CC.safe(entry.getName()) + " &7— try again later or add an access token."));
                 return Optional.empty();
             }
             if (status != 200) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API returned HTTP &e" + status
-                    + " &7for &f" + entry.getName() + "&7."));
+                    + " &7for &f" + CC.safe(entry.getName()) + "&7."));
                 return Optional.empty();
             }
 
             versions = JsonParser.parseString(readBody(conn)).getAsJsonArray();
         } catch (Exception e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Modrinth update check failed for &f"
-                + entry.getName() + "&7: " + e));
+                + CC.safe(entry.getName()) + "&7: " + e));
             return Optional.empty();
         } finally {
             if (conn != null) conn.disconnect();
         }
 
-        if (versions.size() == 0) {
+        if (versions.isEmpty()) {
             logger.warning(CC.c("&c[PluginUpdater] &7No Modrinth versions found for &f"
-                + entry.getName() + "&7."));
+                + CC.safe(entry.getName()) + "&7."));
             return Optional.empty();
         }
 
         // Modrinth returns versions newest-first. Only the newest version is relevant:
         // every Modrinth upload creates a brand-new version id, so a changed id means an
-        // update. Walking to older versions (the previous behaviour) could match an OLDER
-        // build whose filename happened to fit the pattern — silently downgrading the
-        // plugin and re-downloading it on every check when the newest version's filenames
-        // simply don't match the configured asset-pattern.
-        JsonObject version = versions.get(0).getAsJsonObject();
-        if (!version.has("id") || !version.has("version_number") || !version.has("files")
-                || !version.get("files").isJsonArray()) {
+        // update. Walking to older versions could silently downgrade a plugin whose newest
+        // version's filenames don't match the configured asset-pattern.
+        JsonElement versionEl = versions.get(0);
+        if (!versionEl.isJsonObject()) {
             logger.warning(CC.c("&c[PluginUpdater] &7Malformed Modrinth version data for &f"
-                + entry.getName() + "&7."));
+                + CC.safe(entry.getName()) + "&7."));
+            return Optional.empty();
+        }
+        JsonObject version = versionEl.getAsJsonObject();
+        JsonElement idEl     = version.get("id");
+        JsonElement verNumEl = version.get("version_number");
+        if (idEl == null || idEl.isJsonNull()
+                || verNumEl == null || verNumEl.isJsonNull()
+                || !version.has("files") || !version.get("files").isJsonArray()) {
+            logger.warning(CC.c("&c[PluginUpdater] &7Malformed Modrinth version data for &f"
+                + CC.safe(entry.getName()) + "&7."));
             return Optional.empty();
         }
 
-        String versionId     = version.get("id").getAsString();
-        String versionNumber = version.get("version_number").getAsString();
+        String versionId     = idEl.getAsString();
+        String versionNumber = verNumEl.getAsString();
 
         if (versionId.equals(storedKey)) {
             return Optional.empty(); // already on the latest Modrinth version
         }
 
         JsonArray files = version.get("files").getAsJsonArray();
+
+        // Primary pass: find a file whose name matches the configured glob.
+        // Fallback (only when the version has exactly one JAR): use that file regardless of name.
         String singleFileFallbackUrl = null;
+        if (files.size() == 1) {
+            JsonElement fileEl = files.get(0);
+            if (fileEl.isJsonObject()) {
+                JsonObject file = fileEl.getAsJsonObject();
+                JsonElement filenameEl = file.get("filename");
+                JsonElement urlEl      = file.get("url");
+                if (filenameEl != null && !filenameEl.isJsonNull()
+                        && urlEl != null && !urlEl.isJsonNull()
+                        && filenameEl.getAsString().toLowerCase().endsWith(".jar")) {
+                    singleFileFallbackUrl = urlEl.getAsString();
+                }
+            }
+        }
+
         for (int f = 0; f < files.size(); f++) {
-            JsonObject file = files.get(f).getAsJsonObject();
-            if (!file.has("filename") || !file.has("url")) continue;
-            String filename = file.get("filename").getAsString();
+            JsonElement fileEl = files.get(f);
+            if (!fileEl.isJsonObject()) continue;
+            JsonObject file = fileEl.getAsJsonObject();
+            JsonElement filenameEl = file.get("filename");
+            JsonElement urlEl      = file.get("url");
+            if (filenameEl == null || filenameEl.isJsonNull()
+                    || urlEl == null || urlEl.isJsonNull()) continue;
+            String filename = filenameEl.getAsString();
+            String url      = urlEl.getAsString();
 
             if (GlobMatcher.matches(entry.getAssetPattern(), filename)) {
                 return Optional.of(new UpdateInfo(
-                    entry.getName(), storedKey, versionNumber, versionId,
-                    file.get("url").getAsString()));
+                    entry.getName(), storedKey, versionNumber, versionId, url));
             }
-            // Fall back to the sole file only when the version has exactly one JAR.
-            if (files.size() == 1 && filename.toLowerCase().endsWith(".jar"))
-                singleFileFallbackUrl = file.get("url").getAsString();
         }
 
         if (singleFileFallbackUrl != null) {
@@ -157,7 +185,8 @@ public class ModrinthUpdateChecker {
         }
 
         logger.warning(CC.c("&c[PluginUpdater] &7No Modrinth file matching &e'"
-            + entry.getAssetPattern() + "'&7 in latest version of &f" + entry.getName()
+            + CC.safe(entry.getAssetPattern()) + "'&7 in latest version of &f"
+            + CC.safe(entry.getName())
             + "&7. Check &easset-pattern&7 in config.yml."));
         return Optional.empty();
     }
@@ -165,13 +194,16 @@ public class ModrinthUpdateChecker {
     // ── Helpers ────────────────────────────────────────────────────────────
 
     /**
-     * Returns {@code true} if {@code projectId} is a safe Modrinth project slug or ID
-     * that can be appended directly to the Modrinth API base URL.  Rejects characters
-     * that would escape the URL path segment ({@code ?}, {@code #}, {@code /}, etc.).
-     * Modrinth slugs are alphanumeric with hyphens; numeric IDs are base-62.
+     * Returns {@code true} if {@code projectId} is a safe Modrinth project slug or ID.
+     * Modrinth slugs are lowercase alphanumeric with hyphens; base-62 IDs are alphanumeric.
+     * Rejects characters that would escape the URL path segment.
      */
     private static boolean isValidModrinthProject(String projectId) {
-        return projectId != null && projectId.matches("[A-Za-z0-9_.\\-]+");
+        // Modrinth slugs: letters, numbers, hyphens, underscores (e.g. "fabric_api", "sodium")
+        // Modrinth base-62 IDs: alphanumeric only — both subsets are covered by this pattern.
+        // Dots are intentionally excluded: they are not valid in Modrinth slugs/IDs and
+        // would be the most likely typo to cause a confusing 404.
+        return projectId != null && projectId.matches("[A-Za-z0-9_-]+");
     }
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
@@ -198,7 +230,10 @@ public class ModrinthUpdateChecker {
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
             String line;
-            while ((line = reader.readLine()) != null) sb.append(line);
+            while ((line = reader.readLine()) != null) {
+                sb.append(line);
+                sb.append('\n');
+            }
             return sb.toString();
         }
     }

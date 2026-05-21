@@ -19,6 +19,9 @@ public final class GlobMatcher {
     /** Cache of compiled patterns — globs are repeated across many asset names per check cycle. */
     private static final ConcurrentHashMap<String, Pattern> PATTERN_CACHE = new ConcurrentHashMap<>();
 
+    /** Maximum number of entries to keep in the pattern cache, preventing unbounded growth. */
+    private static final int MAX_CACHE_SIZE = 256;
+
     private GlobMatcher() {}
 
     /**
@@ -28,13 +31,20 @@ public final class GlobMatcher {
      * @param filename asset filename to test, e.g. {@code "EssentialsX-2.20.1.jar"}
      */
     public static boolean matches(String glob, String filename) {
-        return PATTERN_CACHE.computeIfAbsent(glob, GlobMatcher::toPattern)
-                            .matcher(filename)
-                            .matches();
+        Pattern p = PATTERN_CACHE.get(glob);
+        if (p == null) {
+            p = toPattern(glob);
+            // Only cache if the map hasn't grown too large (prevents unbounded memory growth
+            // if a misconfigured server generates many unique glob strings).
+            if (PATTERN_CACHE.size() < MAX_CACHE_SIZE) {
+                PATTERN_CACHE.putIfAbsent(glob, p);
+            }
+        }
+        return p.matcher(filename).matches();
     }
 
     private static Pattern toPattern(String glob) {
-        StringBuilder regex = new StringBuilder("^");
+        StringBuilder regex = new StringBuilder();
         for (int i = 0; i < glob.length(); i++) {
             char c = glob.charAt(i);
             switch (c) {
@@ -47,7 +57,6 @@ public final class GlobMatcher {
                 default   -> regex.append(c);
             }
         }
-        regex.append("$");
         return Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE);
     }
 }
