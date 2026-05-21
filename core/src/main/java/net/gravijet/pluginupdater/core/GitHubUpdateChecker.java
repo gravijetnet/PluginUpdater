@@ -33,6 +33,9 @@ public class GitHubUpdateChecker {
 
     private static final String API_BASE = "https://api.github.com/repos/";
 
+    /** Guard against a runaway or malicious API response exhausting heap memory. */
+    private static final int MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
+
     private final Logger logger;
 
     public GitHubUpdateChecker(Logger logger) {
@@ -71,9 +74,12 @@ public class GitHubUpdateChecker {
             firstConn = openConnection(apiUrl, entry.getAccessToken());
             int status = firstConn.getResponseCode();
             if (status == 200) {
-                JsonObject potential = JsonParser.parseString(readBody(firstConn)).getAsJsonObject();
-                if (!potential.has("message")) {
-                    release = potential;
+                JsonElement parsed = JsonParser.parseString(readBody(firstConn));
+                if (parsed.isJsonObject()) {
+                    JsonObject potential = parsed.getAsJsonObject();
+                    if (!potential.has("message")) {
+                        release = potential;
+                    }
                 }
             } else if (status == 401 || status == 403) {
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
@@ -130,7 +136,13 @@ public class GitHubUpdateChecker {
                     return Optional.empty();
                 }
 
-                JsonArray releases = JsonParser.parseString(readBody(listConn)).getAsJsonArray();
+                JsonElement parsedList = JsonParser.parseString(readBody(listConn));
+                if (!parsedList.isJsonArray()) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7Malformed GitHub releases list for &f"
+                        + CC.safe(entry.getName()) + "&7."));
+                    return Optional.empty();
+                }
+                JsonArray releases = parsedList.getAsJsonArray();
 
                 if (releases.isEmpty()) {
                     logger.warning(CC.c("&c[PluginUpdater] &7No releases found for &f"
@@ -222,12 +234,15 @@ public class GitHubUpdateChecker {
                 if (nameEl == null || nameEl.isJsonNull()
                         || idEl == null || idEl.isJsonNull()
                         || updatedAtEl == null || updatedAtEl.isJsonNull()) continue;
-                String assetName = nameEl.getAsString();
+                String assetName  = nameEl.getAsString();
+                String assetLower = assetName.toLowerCase();
 
-                // Fallback pattern: asset ends with .jar and contains entry name (case-insensitive)
-                if (assetName.toLowerCase().endsWith(".jar") &&
-                    (assetName.toLowerCase().contains(nameLower) ||
-                     assetName.toLowerCase().contains(repoSuffix))) {
+                // Require the asset to START with the plugin name (not merely contain it) so that
+                // sub-component JARs like "EssentialsX-Chat-*.jar" are not matched when looking
+                // for "EssentialsX".
+                if (assetLower.endsWith(".jar") &&
+                    (assetLower.startsWith(nameLower + "-") || assetLower.equals(nameLower + ".jar") ||
+                     assetLower.startsWith(repoSuffix + "-") || assetLower.equals(repoSuffix + ".jar"))) {
 
                     long   assetId       = idEl.getAsLong();
                     String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
@@ -279,6 +294,7 @@ public class GitHubUpdateChecker {
         conn.setRequestProperty("User-Agent", "PluginUpdater/1.0");
         conn.setConnectTimeout(10_000);
         conn.setReadTimeout(15_000);
+        conn.setInstanceFollowRedirects(false); // prevent JVM from auto-following redirects without SSRF validation
         if (token != null) {
             conn.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -290,7 +306,13 @@ public class GitHubUpdateChecker {
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
             String line;
+            int totalChars = 0;
             while ((line = reader.readLine()) != null) {
+                totalChars += line.length() + 1;
+                if (totalChars > MAX_BODY_BYTES) {
+                    throw new IOException("API response body exceeded "
+                        + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
+                }
                 sb.append(line);
                 sb.append('\n');
             }

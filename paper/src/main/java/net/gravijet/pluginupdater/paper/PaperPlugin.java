@@ -31,6 +31,11 @@ public class PaperPlugin extends JavaPlugin {
         Path dataDir    = getDataFolder().toPath();
         // Plugins folder: plugins/
         Path pluginsDir = dataDir.getParent();
+        if (pluginsDir == null) {
+            log.severe(CC.c("&c[PluginUpdater] &7Could not determine plugins folder — disabling."));
+            getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
         ConfigManager        configManager    = new ConfigManager(dataDir, log);
         VersionStore         versionStore     = new VersionStore(dataDir, log);

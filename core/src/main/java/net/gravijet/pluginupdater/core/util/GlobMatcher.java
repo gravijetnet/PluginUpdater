@@ -33,11 +33,14 @@ public final class GlobMatcher {
     public static boolean matches(String glob, String filename) {
         Pattern p = PATTERN_CACHE.get(glob);
         if (p == null) {
-            p = toPattern(glob);
-            // Only cache if the map hasn't grown too large (prevents unbounded memory growth
-            // if a misconfigured server generates many unique glob strings).
+            Pattern compiled = toPattern(glob);
             if (PATTERN_CACHE.size() < MAX_CACHE_SIZE) {
-                PATTERN_CACHE.putIfAbsent(glob, p);
+                // putIfAbsent returns the pre-existing value when another thread races in first;
+                // use that to keep every caller operating on the same compiled instance.
+                Pattern existing = PATTERN_CACHE.putIfAbsent(glob, compiled);
+                p = (existing != null) ? existing : compiled;
+            } else {
+                p = compiled;
             }
         }
         return p.matcher(filename).matches();

@@ -39,6 +39,9 @@ public class ModrinthUpdateChecker {
 
     private static final String API_BASE = "https://api.modrinth.com/v2/project/";
 
+    /** Guard against a runaway or malicious API response exhausting heap memory. */
+    private static final int MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB
+
     private final Logger logger;
 
     public ModrinthUpdateChecker(Logger logger) {
@@ -218,6 +221,7 @@ public class ModrinthUpdateChecker {
         conn.setRequestProperty("User-Agent", "PluginUpdater/1.0 (github.com/gravijetnet/PluginUpdater)");
         conn.setConnectTimeout(10_000);
         conn.setReadTimeout(15_000);
+        conn.setInstanceFollowRedirects(false); // prevent JVM from auto-following redirects without SSRF validation
         // Modrinth token format: plain token, no "Bearer" prefix
         if (token != null) {
             conn.setRequestProperty("Authorization", token);
@@ -230,7 +234,13 @@ public class ModrinthUpdateChecker {
                 new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
             StringBuilder sb = new StringBuilder();
             String line;
+            int totalChars = 0;
             while ((line = reader.readLine()) != null) {
+                totalChars += line.length() + 1;
+                if (totalChars > MAX_BODY_BYTES) {
+                    throw new IOException("API response body exceeded "
+                        + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
+                }
                 sb.append(line);
                 sb.append('\n');
             }

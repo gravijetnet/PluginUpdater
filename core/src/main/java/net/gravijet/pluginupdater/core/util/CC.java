@@ -25,7 +25,7 @@ public final class CC {
      * Appends a reset ({@code ESC[0m}) at the end if any code was translated.
      */
     public static String c(String msg) {
-        if (msg == null) return null;
+        if (msg == null) return "";
         char[] chars = msg.toCharArray();
         StringBuilder sb = new StringBuilder(msg.length() + 16);
         boolean hasColor = false;
@@ -50,7 +50,7 @@ public final class CC {
      * Handles any CSI sequence (any letter terminator), not only SGR sequences ending in 'm'.
      */
     public static String strip(String msg) {
-        if (msg == null) return null;
+        if (msg == null) return "";
         return msg.replaceAll(ANSI_PATTERN, "");
     }
 

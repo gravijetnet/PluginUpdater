@@ -64,7 +64,7 @@ public class FileUpdater {
             if (status != 200) {
                 logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
                     + " &7failed with HTTP &e" + status
-                    + " &8(&7url: &f" + conn.getURL() + "&8)&7."));
+                    + " &8(&7url: &f" + CC.safe(conn.getURL().toString()) + "&8)&7."));
                 return null;
             }
 
@@ -233,8 +233,10 @@ public class FileUpdater {
                 || h.startsWith("fc") || h.startsWith("fd")) {
             return true;
         }
-        // IPv6 in brackets: [::1], [fe80::1%eth0]
-        if (h.startsWith("[") && h.endsWith("]")) {
+        // IPv6 in brackets: [::1], [fe80::1%eth0].
+        // A host starting with '[' but missing the closing ']' is malformed — treat as unsafe.
+        if (h.startsWith("[")) {
+            if (!h.endsWith("]")) return true;
             return isPrivateHost(h.substring(1, h.length() - 1));
         }
         return false;
@@ -271,15 +273,17 @@ public class FileUpdater {
         throws IOException {
         try {
             int hops = 0;
-            while (hops < 10) {
+            while (true) {
                 int status = conn.getResponseCode();
                 if (status < 300 || status >= 400) break;
                 String location = conn.getHeaderField("Location");
                 if (location == null) break;
+                if (++hops > 10) {
+                    throw new IOException("Too many redirects (> 10 hops) — possible redirect loop.");
+                }
                 conn.disconnect();
                 requireSafeHttps(location); // SSRF: validate every redirect target
                 conn = openGet(location, tokenForRedirects);
-                hops++;
             }
             return conn;
         } catch (IOException e) {

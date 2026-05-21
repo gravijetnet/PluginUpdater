@@ -115,7 +115,8 @@ public class VersionStore {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
             }
         } catch (IOException e) {
-            logger.warning(CC.c("&c[PluginUpdater] &7Failed to save versions.yml: " + e.getMessage()));
+            logger.severe(CC.c("&c[PluginUpdater] &7Failed to save versions.yml: " + e.getMessage()
+                + " &7— version keys are in memory only; plugins may be re-downloaded on next start."));
             try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
         }
     }

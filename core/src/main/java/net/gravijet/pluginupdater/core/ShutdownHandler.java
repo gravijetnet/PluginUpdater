@@ -52,6 +52,9 @@ public class ShutdownHandler {
     /** Maximum time to wait for the shutdown update worker before giving up. */
     private static final long TIMEOUT_MS = 30_000L;
 
+    /** Maximum time to drain in-progress periodic downloads before the shutdown worker starts. */
+    private static final long DRAIN_TIMEOUT_MS = 10_000L;
+
     private final ConfigManager          config;
     private final VersionStore           versions;
     private final GitHubUpdateChecker    githubChecker;
@@ -154,13 +157,13 @@ public class ShutdownHandler {
      * The JVM shutdown hook handles forced kills.
      */
     public void onDisable() {
-        // Track interruption but don't re-set the flag until after runShutdownUpdates().
-        // If the flag were set earlier, worker.join() inside runShutdownUpdates() would
-        // throw InterruptedException immediately and the shutdown updates would not be awaited.
+        // Track interruption and re-set the flag before runShutdownUpdates() so that an
+        // inbound interrupt propagates to the shutdown worker's join, allowing the JVM to
+        // exit promptly when the container signals shutdown.
         boolean interrupted = false;
 
         if (scheduler != null) {
-            scheduler.shutdownNow();
+            scheduler.shutdown(); // let the running task finish; shutdownNow() would abort active downloads
             try {
                 scheduler.awaitTermination(5, TimeUnit.SECONDS);
             } catch (InterruptedException e) {
@@ -183,13 +186,13 @@ public class ShutdownHandler {
 
         // Wait for any in-progress periodic downloads to finish before the shutdown worker
         // starts, so two worker threads never write to the same target JAR simultaneously.
-        long drainDeadline = System.currentTimeMillis() + TIMEOUT_MS;
+        long drainDeadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
         while (!processingPlugins.isEmpty() && System.currentTimeMillis() < drainDeadline) {
             try { Thread.sleep(50); } catch (InterruptedException e) { interrupted = true; break; }
         }
 
-        runShutdownUpdates();
         if (interrupted) Thread.currentThread().interrupt();
+        runShutdownUpdates();
     }
 
     // ── Core logic ─────────────────────────────────────────────────────────
@@ -203,10 +206,10 @@ public class ShutdownHandler {
             () -> runCheckSync(label),
             "PluginUpdater-" + label + "-Worker");
         worker.setDaemon(true);
-        worker.start(); // start before publishing the reference so isAlive() is always true when read
         if ("startup".equals(label)) {
-            startupThread = worker;
+            startupThread = worker; // publish reference before start so onDisable() cannot miss it
         }
+        worker.start();
     }
 
     /** Runs update checks synchronously on the current thread. */

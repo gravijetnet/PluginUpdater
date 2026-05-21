@@ -66,6 +66,10 @@ public class VelocityPlugin {
         // dataDirectory = <proxy-root>/plugins/pluginupdater/
         // pluginsDir    = <proxy-root>/plugins/
         Path pluginsDir = dataDirectory.getParent();
+        if (pluginsDir == null) {
+            slf4j.error("[PluginUpdater] Could not determine plugins folder from data directory: {}", dataDirectory);
+            return;
+        }
 
         ConfigManager         configManager    = new ConfigManager(dataDirectory, coreLogger);
         VersionStore          versionStore     = new VersionStore(dataDirectory, coreLogger);
@@ -86,9 +90,11 @@ public class VelocityPlugin {
 
         // Attempt to register this plugin's own JAR for clean self-updates.
         try {
-            Path selfJar = Path.of(
-                VelocityPlugin.class.getProtectionDomain().getCodeSource().getLocation().toURI()
-            ).toAbsolutePath();
+            java.security.ProtectionDomain pd = VelocityPlugin.class.getProtectionDomain();
+            java.security.CodeSource cs = (pd != null) ? pd.getCodeSource() : null;
+            java.net.URL loc = (cs != null) ? cs.getLocation() : null;
+            if (loc == null) throw new IllegalStateException("code source location unavailable");
+            Path selfJar = Path.of(loc.toURI()).toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
