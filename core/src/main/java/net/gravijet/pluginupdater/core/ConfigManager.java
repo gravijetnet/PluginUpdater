@@ -94,8 +94,10 @@ public class ConfigManager {
         checkIntervalMinutes = 30;
         plugins.clear();
 
+        // createDirectories is called unconditionally so the directory is guaranteed to
+        // exist before the exists() check, eliminating the TOCTOU window.
+        Files.createDirectories(dataFolder);
         if (!Files.exists(configFile)) {
-            Files.createDirectories(dataFolder);
             Files.writeString(configFile, DEFAULT_CONFIG, StandardCharsets.UTF_8);
             // Created default config.yml, no log to avoid spam
         }

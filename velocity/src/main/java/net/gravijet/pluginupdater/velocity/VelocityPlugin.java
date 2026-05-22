@@ -94,11 +94,19 @@ public class VelocityPlugin {
             java.security.CodeSource cs = (pd != null) ? pd.getCodeSource() : null;
             java.net.URL loc = (cs != null) ? cs.getLocation() : null;
             if (loc == null) throw new IllegalStateException("code source location unavailable");
-            Path selfJar = Path.of(loc.toURI()).toAbsolutePath();
+            // toURI() throws URISyntaxException for URLs with characters illegal in URIs;
+            // convert it to an IOException so the catch block can give a clearer message.
+            java.net.URI uri;
+            try {
+                uri = loc.toURI();
+            } catch (java.net.URISyntaxException ex) {
+                throw new java.io.IOException("JAR code-source URL cannot be converted to a path: " + loc, ex);
+            }
+            Path selfJar = Path.of(uri).toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {
-            slf4j.warn("[PluginUpdater] Could not determine self-JAR path: {}", String.valueOf(e));
+            slf4j.warn("[PluginUpdater] Could not determine self-JAR path (self-updates may place JAR under a generated name): {}", String.valueOf(e));
         }
 
         shutdownHandler.registerShutdownHook();

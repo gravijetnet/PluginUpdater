@@ -40,7 +40,7 @@ public class VersionStore {
 
     /** Loads (or creates) {@code versions.yml} from the data folder. */
     @SuppressWarnings("unchecked")
-    public void load() throws IOException {
+    public synchronized void load() throws IOException {
         Path file = dataFolder.resolve("versions.yml");
 
         if (!Files.exists(file)) {
@@ -102,8 +102,9 @@ public class VersionStore {
 
         StringBuilder sb = new StringBuilder(
             "# PluginUpdater version store — managed automatically, do not edit.\n");
-        // Quote both key and value to prevent YAML injection from special characters
-        versions.forEach((name, ver) ->
+        // Copy the map entries under the existing synchronized lock so the iteration
+        // sees a consistent point-in-time snapshot even if load() is called concurrently.
+        new java.util.HashMap<>(versions).forEach((name, ver) ->
             sb.append(quoteYaml(name)).append(": ").append(quoteYaml(ver)).append('\n')
         );
 

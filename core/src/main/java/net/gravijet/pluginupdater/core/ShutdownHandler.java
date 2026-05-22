@@ -163,9 +163,14 @@ public class ShutdownHandler {
         boolean interrupted = false;
 
         if (scheduler != null) {
-            scheduler.shutdown(); // let the running task finish; shutdownNow() would abort active downloads
+            // shutdown() (not shutdownNow) lets the currently-running periodic task finish
+            // rather than aborting an active download mid-stream.  We wait up to
+            // DRAIN_TIMEOUT_MS for it to complete before proceeding to the shutdown worker,
+            // so a new periodic firing cannot race with the shutdown worker writing the same
+            // target JAR.
+            scheduler.shutdown();
             try {
-                scheduler.awaitTermination(5, TimeUnit.SECONDS);
+                scheduler.awaitTermination(DRAIN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             } catch (InterruptedException e) {
                 interrupted = true;
             }
@@ -210,6 +215,14 @@ public class ShutdownHandler {
             startupThread = worker; // publish reference before start so onDisable() cannot miss it
         }
         worker.start();
+        // Yield briefly so the scheduler can transition the thread to RUNNABLE before
+        // onDisable() could call join() on a still-NEW thread (which returns immediately,
+        // leaving the startup download unjoinable).
+        if ("startup".equals(label)) {
+            while (worker.getState() == Thread.State.NEW) {
+                Thread.yield();
+            }
+        }
     }
 
     /** Runs update checks synchronously on the current thread. */
@@ -374,9 +387,12 @@ public class ShutdownHandler {
                 boolean matched = false;
                 if (fname.equals(nameLower + ".jar")) {
                     matched = true;
-                } else if (fname.startsWith(versionedPrefix)) {
+                } else if (fname.startsWith(versionedPrefix)
+                        && fname.length() > versionedPrefix.length()) {
                     // Require the character after the dash to be a digit or 'v' so that
                     // "essentialsx-chatcolor-1.0.jar" is not mistaken for "essentialsx".
+                    // The length guard prevents StringIndexOutOfBoundsException when the
+                    // filename is exactly "<name>-.jar" (prefix fills the name portion).
                     char first = fname.charAt(versionedPrefix.length());
                     if (Character.isDigit(first) || first == 'v') {
                         matched = true;
@@ -390,7 +406,9 @@ public class ShutdownHandler {
                             bestMatch = jar;
                         }
                     } catch (IOException ignored) {
-                        if (bestMatch == null) bestMatch = jar;
+                        // Cannot read mtime; only use this file as a last resort (i.e. keep
+                        // any previously found match that has a real mtime over this one).
+                        if (bestMatch == null || bestMtime == -1) bestMatch = jar;
                     }
                 }
             }
@@ -419,6 +437,13 @@ public class ShutdownHandler {
 
     /** Strips characters that are unsafe in filenames or could cause path traversal. */
     private static String sanitizeFilename(String s) {
-        return s.replaceAll("[\0/\\\\:*?\"<>|]", "_");
+        // Remove forbidden filename characters and null bytes.
+        String safe = s.replaceAll("[\0/\\\\:*?\"<>|]", "_");
+        // Collapse dot-only segments ("..") that survived slash removal to prevent
+        // path-traversal-looking names like ".._.._evil".
+        safe = safe.replaceAll("\\.\\.+", "_");
+        // Cap at 64 characters so name + "-" + version + ".jar" stays under 255 bytes.
+        if (safe.length() > 64) safe = safe.substring(0, 64);
+        return safe;
     }
 }

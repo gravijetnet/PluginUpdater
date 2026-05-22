@@ -103,7 +103,13 @@ public class ModrinthUpdateChecker {
                 return Optional.empty();
             }
 
-            versions = JsonParser.parseString(readBody(conn)).getAsJsonArray();
+            JsonElement parsed = JsonParser.parseString(readBody(conn));
+            if (!parsed.isJsonArray()) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Modrinth API returned unexpected response shape for &f"
+                    + CC.safe(entry.getName()) + "&7: " + parsed));
+                return Optional.empty();
+            }
+            versions = parsed.getAsJsonArray();
         } catch (Exception e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Modrinth update check failed for &f"
                 + CC.safe(entry.getName()) + "&7: " + e));
@@ -149,22 +155,9 @@ public class ModrinthUpdateChecker {
         JsonArray files = version.get("files").getAsJsonArray();
 
         // Primary pass: find a file whose name matches the configured glob.
-        // Fallback (only when the version has exactly one JAR): use that file regardless of name.
+        // The single-file fallback URL is collected during this same pass to avoid a
+        // redundant second iteration — it is only used when no glob match was found.
         String singleFileFallbackUrl = null;
-        if (files.size() == 1) {
-            JsonElement fileEl = files.get(0);
-            if (fileEl.isJsonObject()) {
-                JsonObject file = fileEl.getAsJsonObject();
-                JsonElement filenameEl = file.get("filename");
-                JsonElement urlEl      = file.get("url");
-                if (filenameEl != null && !filenameEl.isJsonNull()
-                        && urlEl != null && !urlEl.isJsonNull()
-                        && filenameEl.getAsString().toLowerCase().endsWith(".jar")) {
-                    singleFileFallbackUrl = urlEl.getAsString();
-                }
-            }
-        }
-
         for (int f = 0; f < files.size(); f++) {
             JsonElement fileEl = files.get(f);
             if (!fileEl.isJsonObject()) continue;
@@ -179,6 +172,11 @@ public class ModrinthUpdateChecker {
             if (GlobMatcher.matches(entry.getAssetPattern(), filename)) {
                 return Optional.of(new UpdateInfo(
                     entry.getName(), storedKey, versionNumber, versionId, url));
+            }
+
+            // Capture fallback only when there is exactly one file and it is a JAR.
+            if (files.size() == 1 && filename.toLowerCase().endsWith(".jar")) {
+                singleFileFallbackUrl = url;
             }
         }
 
@@ -236,7 +234,9 @@ public class ModrinthUpdateChecker {
             String line;
             int totalChars = 0;
             while ((line = reader.readLine()) != null) {
-                totalChars += line.length() + 1;
+                // readLine() strips the line terminator; add 2 to account for \r\n
+                // (worst case) so the limit is never exceeded by more than 1 byte per line.
+                totalChars += line.length() + 2;
                 if (totalChars > MAX_BODY_BYTES) {
                     throw new IOException("API response body exceeded "
                         + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");

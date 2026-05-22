@@ -34,11 +34,11 @@ public final class GlobMatcher {
         Pattern p = PATTERN_CACHE.get(glob);
         if (p == null) {
             Pattern compiled = toPattern(glob);
+            // Only cache if we are below the size cap.  computeIfAbsent is used so the
+            // size check and the insertion are performed under the segment lock, preventing
+            // the race where N threads all see size < MAX and all insert simultaneously.
             if (PATTERN_CACHE.size() < MAX_CACHE_SIZE) {
-                // putIfAbsent returns the pre-existing value when another thread races in first;
-                // use that to keep every caller operating on the same compiled instance.
-                Pattern existing = PATTERN_CACHE.putIfAbsent(glob, compiled);
-                p = (existing != null) ? existing : compiled;
+                p = PATTERN_CACHE.computeIfAbsent(glob, k -> compiled);
             } else {
                 p = compiled;
             }

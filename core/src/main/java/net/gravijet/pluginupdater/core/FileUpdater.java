@@ -84,6 +84,11 @@ public class FileUpdater {
             boolean success = false;
             try {
                 long bytesWritten = 0;
+                // The OutputStream is closed in its own try-with-resources block that
+                // completes *before* the size/truncation checks so the file handle is
+                // always released before the finally block attempts deletion.  This is
+                // critical on Windows where an open handle prevents Files.deleteIfExists.
+                boolean limitExceeded = false;
                 try (InputStream in = conn.getInputStream();
                      OutputStream out = Files.newOutputStream(temp)) {
                     byte[] buf = new byte[16_384];
@@ -92,12 +97,16 @@ public class FileUpdater {
                         out.write(buf, 0, n);
                         bytesWritten += n;
                         if (bytesWritten > MAX_DOWNLOAD_BYTES) {
-                            logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
-                                + " &7aborted: exceeded the &e"
-                                + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + " MB&7 safety limit."));
-                            return null; // success stays false → finally deletes the partial temp file
+                            limitExceeded = true;
+                            break; // exit loop; TWR closes the stream before finally runs
                         }
                     }
+                }
+                if (limitExceeded) {
+                    logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
+                        + " &7aborted: exceeded the &e"
+                        + (MAX_DOWNLOAD_BYTES / 1024 / 1024) + " MB&7 safety limit."));
+                    return null; // success stays false → finally deletes the partial temp file
                 }
                 // Validate download completeness when the server declares a Content-Length.
                 // A mismatch means the connection was dropped before all bytes arrived.
@@ -234,10 +243,17 @@ public class FileUpdater {
             return true;
         }
         // IPv6 in brackets: [::1], [fe80::1%eth0].
-        // A host starting with '[' but missing the closing ']' is malformed — treat as unsafe.
+        // RFC 3986 allows exactly one bracket layer; recursing further would be malformed input
+        // that could trigger a StackOverflowError.  Unwrap exactly one layer here.
         if (h.startsWith("[")) {
-            if (!h.endsWith("]")) return true;
-            return isPrivateHost(h.substring(1, h.length() - 1));
+            if (!h.endsWith("]")) return true; // malformed — treat as unsafe
+            String inner = h.substring(1, h.length() - 1);
+            // Re-check without recursion: only the plain IPv6 checks apply inside brackets.
+            String ih = inner.toLowerCase(Locale.ROOT);
+            return ih.equals("::1")
+                || ih.startsWith("fe80:")
+                || ih.startsWith("fc")
+                || ih.startsWith("fd");
         }
         return false;
     }

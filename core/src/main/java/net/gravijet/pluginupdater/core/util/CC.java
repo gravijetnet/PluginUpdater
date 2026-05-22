@@ -16,7 +16,9 @@ public final class CC {
 
     // Regex that matches any complete ANSI CSI escape sequence (ESC [ ... <letter>).
     // Uses a letter terminator instead of only 'm' so non-SGR sequences are also stripped.
-    private static final String ANSI_PATTERN = ESC_CHAR + "\\[[^a-zA-Z]*[a-zA-Z]";
+    // Stored as a compiled Pattern so strip() does not recompile on every call.
+    private static final java.util.regex.Pattern ANSI_PATTERN =
+        java.util.regex.Pattern.compile(ESC_CHAR + "\\[[^a-zA-Z]*[a-zA-Z]");
 
     private CC() {}
 
@@ -51,7 +53,7 @@ public final class CC {
      */
     public static String strip(String msg) {
         if (msg == null) return "";
-        return msg.replaceAll(ANSI_PATTERN, "");
+        return ANSI_PATTERN.matcher(msg).replaceAll("");
     }
 
     /**

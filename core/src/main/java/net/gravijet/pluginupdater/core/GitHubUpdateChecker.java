@@ -188,72 +188,31 @@ public class GitHubUpdateChecker {
         if (assetsEl == null || !assetsEl.isJsonArray()) return Optional.empty();
         JsonArray assets = assetsEl.getAsJsonArray();
 
-        // Find the release asset whose filename matches the configured glob
+        // Primary pass: find the asset whose filename matches the configured glob.
         for (int i = 0; i < assets.size(); i++) {
-            JsonElement el = assets.get(i);
-            if (!el.isJsonObject()) continue;
-            JsonObject asset = el.getAsJsonObject();
-            JsonElement nameEl      = asset.get("name");
-            JsonElement idEl        = asset.get("id");
-            JsonElement updatedAtEl = asset.get("updated_at");
-            if (nameEl == null || nameEl.isJsonNull()
-                    || idEl == null || idEl.isJsonNull()
-                    || updatedAtEl == null || updatedAtEl.isJsonNull()) continue;
-            String assetName = nameEl.getAsString();
-
-            if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) continue;
-
-            long   assetId       = idEl.getAsLong();
-            // Use the API asset endpoint — more reliable than browser_download_url for both
-            // public and private repos; auth header is forwarded only on the initial request.
-            String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
-            // updated_at changes whenever the asset is re-uploaded, even under the same tag.
-            String assetUpdatedAt = updatedAtEl.getAsString();
-
-            if (assetUpdatedAt.equals(storedKey)) {
-                return Optional.empty();
-            }
-
-            return Optional.of(new UpdateInfo(
-                entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
+            Optional<UpdateInfo> hit = parseAsset(assets.get(i), entry, storedKey, latestTag);
+            if (hit != null) return hit; // null = skip; empty = up-to-date; present = update found
         }
 
-        // No asset matched the configured glob
-        // Try fallback: if pattern contains "latest", look for any jar asset containing plugin name
-        boolean patternContainsLatest = entry.getAssetPattern().toLowerCase().contains("latest");
-        if (patternContainsLatest) {
+        // Fallback: if pattern contains "latest", accept any JAR that starts with the plugin
+        // name or repo slug.  Require the asset to START with the name (not merely contain it)
+        // so "EssentialsX-Chat-*.jar" is not mistaken for "EssentialsX".
+        if (entry.getAssetPattern().toLowerCase().contains("latest")) {
             String repoSuffix = entry.getRepo().toLowerCase().replace("/", "-");
             String nameLower  = entry.getName().toLowerCase();
             for (int i = 0; i < assets.size(); i++) {
                 JsonElement el = assets.get(i);
                 if (!el.isJsonObject()) continue;
                 JsonObject asset = el.getAsJsonObject();
-                JsonElement nameEl      = asset.get("name");
-                JsonElement idEl        = asset.get("id");
-                JsonElement updatedAtEl = asset.get("updated_at");
-                if (nameEl == null || nameEl.isJsonNull()
-                        || idEl == null || idEl.isJsonNull()
-                        || updatedAtEl == null || updatedAtEl.isJsonNull()) continue;
-                String assetName  = nameEl.getAsString();
-                String assetLower = assetName.toLowerCase();
-
-                // Require the asset to START with the plugin name (not merely contain it) so that
-                // sub-component JARs like "EssentialsX-Chat-*.jar" are not matched when looking
-                // for "EssentialsX".
+                JsonElement nameEl = asset.get("name");
+                if (nameEl == null || nameEl.isJsonNull()) continue;
+                String assetLower = nameEl.getAsString().toLowerCase();
                 if (assetLower.endsWith(".jar") &&
                     (assetLower.startsWith(nameLower + "-") || assetLower.equals(nameLower + ".jar") ||
                      assetLower.startsWith(repoSuffix + "-") || assetLower.equals(repoSuffix + ".jar"))) {
-
-                    long   assetId       = idEl.getAsLong();
-                    String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
-                    String assetUpdatedAt = updatedAtEl.getAsString();
-
-                    if (assetUpdatedAt.equals(storedKey)) {
-                        return Optional.empty();
-                    }
-
-                    return Optional.of(new UpdateInfo(
-                        entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
+                    // Use the name-prefix match already verified above; skip glob check.
+                    Optional<UpdateInfo> hit = parseAssetNoGlob(el, entry, storedKey, latestTag);
+                    if (hit != null) return hit;
                 }
             }
             logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f"
@@ -267,6 +226,63 @@ public class GitHubUpdateChecker {
                 + "&7. Check &easset-pattern&7 in config.yml."));
         }
         return Optional.empty();
+    }
+
+    /**
+     * Parses a single asset JSON element and returns:
+     * <ul>
+     *   <li>{@code null}                — asset should be skipped (missing fields, non-object, no glob match)
+     *   <li>{@link Optional#empty()}    — asset matches and is already up to date
+     *   <li>{@code Optional.of(...)}    — asset matches and is newer
+     * </ul>
+     * This helper is used by both the primary and fallback loops to avoid duplicating
+     * asset-field parsing and {@code id} type-safety logic.
+     */
+    private Optional<UpdateInfo> parseAsset(JsonElement el, PluginEntry entry,
+                                            String storedKey, String latestTag) {
+        if (!el.isJsonObject()) return null;
+        JsonObject asset = el.getAsJsonObject();
+        JsonElement nameEl      = asset.get("name");
+        JsonElement idEl        = asset.get("id");
+        JsonElement updatedAtEl = asset.get("updated_at");
+        if (nameEl == null || nameEl.isJsonNull()
+                || idEl == null || idEl.isJsonNull()
+                || updatedAtEl == null || updatedAtEl.isJsonNull()) return null;
+
+        // Guard against non-numeric id values (e.g. future API returning a string id).
+        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
+
+        String assetName = nameEl.getAsString();
+        if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) return null;
+
+        long   assetId      = idEl.getAsLong();
+        // Use the API asset endpoint — more reliable than browser_download_url for both
+        // public and private repos; auth header is forwarded only on the initial request.
+        String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
+        // updated_at changes whenever the asset is re-uploaded, even under the same tag.
+        String assetUpdatedAt = updatedAtEl.getAsString();
+
+        if (assetUpdatedAt.equals(storedKey)) return Optional.empty();
+        return Optional.of(new UpdateInfo(entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
+    }
+
+    /** Like {@link #parseAsset} but skips the glob check — used by the name-prefix fallback loop. */
+    private Optional<UpdateInfo> parseAssetNoGlob(JsonElement el, PluginEntry entry,
+                                                   String storedKey, String latestTag) {
+        if (!el.isJsonObject()) return null;
+        JsonObject asset = el.getAsJsonObject();
+        JsonElement idEl        = asset.get("id");
+        JsonElement updatedAtEl = asset.get("updated_at");
+        if (idEl == null || idEl.isJsonNull()
+                || updatedAtEl == null || updatedAtEl.isJsonNull()) return null;
+        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
+
+        long   assetId      = idEl.getAsLong();
+        String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
+        String assetUpdatedAt = updatedAtEl.getAsString();
+
+        if (assetUpdatedAt.equals(storedKey)) return Optional.empty();
+        return Optional.of(new UpdateInfo(entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────
@@ -308,7 +324,9 @@ public class GitHubUpdateChecker {
             String line;
             int totalChars = 0;
             while ((line = reader.readLine()) != null) {
-                totalChars += line.length() + 1;
+                // readLine() strips the line terminator; add 2 to account for \r\n
+                // (worst case) so the limit is never exceeded by more than 1 byte per line.
+                totalChars += line.length() + 2;
                 if (totalChars > MAX_BODY_BYTES) {
                     throw new IOException("API response body exceeded "
                         + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
