@@ -327,7 +327,7 @@ public class ShutdownHandler {
 
         if (tempFile == null) return; // download failed, already logged
 
-        Path targetJar = resolveTargetJar(entry, safeVer);
+        Path targetJar = resolveTargetJar(entry);
 
         if (fileUpdater.atomicReplace(tempFile, targetJar)) {
             // Remove old JAR if it had a different name (e.g. old version in filename)
@@ -417,17 +417,18 @@ public class ShutdownHandler {
      * Resolves the desired target path for the updated JAR.
      *
      * <p>For pre-registered JARs (e.g. the updater itself) the known path is returned
-     * unchanged.  For all other plugins the target is always
-     * {@code <plugins>/<ConfigName>-<version>.jar} so that the filename stays in sync
-     * with the configured name and current version.
+     * unchanged.  For all other plugins the target is always {@code <plugins>/<ConfigName>.jar}
+     * — a stable name that {@link #findExistingJar} can reliably locate on the next run.
+     * Using a versioned filename caused perpetual re-downloads because tags like {@code "latest"}
+     * produced names such as {@code Lobby-latest.jar} which the scan pattern did not recognise.
      */
-    private Path resolveTargetJar(PluginEntry entry, String safeVersion) {
+    private Path resolveTargetJar(PluginEntry entry) {
         // Known path (e.g. the updater's own JAR) — keep as-is
         Path known = knownJarPaths.get(entry.getName());
         if (known != null) return known;
 
-        // Always use <ConfigName>-<version>.jar so the filename matches the config
-        return pluginsFolder.resolve(sanitizeFilename(entry.getName()) + "-" + safeVersion + ".jar");
+        // Use <ConfigName>.jar — stable name always matched by findExistingJar
+        return pluginsFolder.resolve(sanitizeFilename(entry.getName()) + ".jar");
     }
 
     /** Strips characters that are unsafe in filenames or could cause path traversal. */
