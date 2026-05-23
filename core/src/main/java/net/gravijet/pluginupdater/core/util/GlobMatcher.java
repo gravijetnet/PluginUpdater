@@ -32,17 +32,17 @@ public final class GlobMatcher {
      */
     public static boolean matches(String glob, String filename) {
         Pattern p = PATTERN_CACHE.get(glob);
-        if (p == null) {
-            Pattern compiled = toPattern(glob);
-            // Only cache if we are below the size cap.  computeIfAbsent is used so the
-            // size check and the insertion are performed under the segment lock, preventing
-            // the race where N threads all see size < MAX and all insert simultaneously.
-            if (PATTERN_CACHE.size() < MAX_CACHE_SIZE) {
-                p = PATTERN_CACHE.computeIfAbsent(glob, k -> compiled);
-            } else {
-                p = compiled;
-            }
+        if (p != null) return p.matcher(filename).matches();
+        Pattern compiled = toPattern(glob);
+        // Evict one arbitrary entry before inserting to enforce the size cap atomically.
+        // ConcurrentHashMap.size() is only an estimate under contention, so we check again
+        // inside the eviction path rather than relying on the pre-check alone.
+        if (PATTERN_CACHE.size() >= MAX_CACHE_SIZE) {
+            PATTERN_CACHE.keys().asIterator().forEachRemaining(k -> {
+                if (PATTERN_CACHE.size() >= MAX_CACHE_SIZE) PATTERN_CACHE.remove(k);
+            });
         }
+        p = PATTERN_CACHE.computeIfAbsent(glob, k -> compiled);
         return p.matcher(filename).matches();
     }
 

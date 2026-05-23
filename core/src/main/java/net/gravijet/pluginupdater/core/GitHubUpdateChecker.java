@@ -9,9 +9,8 @@ import net.gravijet.pluginupdater.core.model.UpdateInfo;
 import net.gravijet.pluginupdater.core.util.CC;
 import net.gravijet.pluginupdater.core.util.GlobMatcher;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -90,10 +89,13 @@ public class GitHubUpdateChecker {
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API rate-limited (HTTP 429) for &f"
                     + CC.safe(entry.getName()) + " &7— try again later."));
                 return Optional.empty();
-            } else if (status != 404) {
+            } else if (status == 404) {
                 // 404 means the "latest" tag doesn't exist — fall through to list-based lookup
+            } else {
+                // Unexpected status (e.g. 5xx) — do not attempt a redundant second request.
                 logger.warning(CC.c("&c[PluginUpdater] &7GitHub API returned HTTP &e" + status
                     + " &7for tag 'latest' of &f" + CC.safe(entry.getName()) + "&7."));
+                return Optional.empty();
             }
         } catch (Exception e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Failed to fetch tag 'latest' for &f"
@@ -251,6 +253,7 @@ public class GitHubUpdateChecker {
 
         // Guard against non-numeric id values (e.g. future API returning a string id).
         if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
+        if (!nameEl.isJsonPrimitive() || !updatedAtEl.isJsonPrimitive()) return null;
 
         String assetName = nameEl.getAsString();
         if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) return null;
@@ -276,6 +279,7 @@ public class GitHubUpdateChecker {
         if (idEl == null || idEl.isJsonNull()
                 || updatedAtEl == null || updatedAtEl.isJsonNull()) return null;
         if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
+        if (!updatedAtEl.isJsonPrimitive()) return null;
 
         long   assetId      = idEl.getAsLong();
         String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
@@ -318,23 +322,21 @@ public class GitHubUpdateChecker {
     }
 
     private static String readBody(HttpURLConnection conn) throws IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+        try (InputStream raw = conn.getInputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            int totalBytes = 0;
             StringBuilder sb = new StringBuilder();
-            String line;
-            int totalChars = 0;
-            while ((line = reader.readLine()) != null) {
-                // readLine() strips the line terminator; add 2 to account for \r\n
-                // (worst case) so the limit is never exceeded by more than 1 byte per line.
-                totalChars += line.length() + 2;
-                if (totalChars > MAX_BODY_BYTES) {
+            java.io.ByteArrayOutputStream chunk = new java.io.ByteArrayOutputStream(8192);
+            while ((n = raw.read(buf)) != -1) {
+                totalBytes += n;
+                if (totalBytes > MAX_BODY_BYTES) {
                     throw new IOException("API response body exceeded "
                         + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
                 }
-                sb.append(line);
-                sb.append('\n');
+                chunk.write(buf, 0, n);
             }
-            return sb.toString();
+            return chunk.toString(StandardCharsets.UTF_8);
         }
     }
 }

@@ -19,7 +19,7 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <velocity.version>3.3.0-SNAPSHOT</velocity.version>
+        <velocity.version>3.4.0</velocity.version>
     </properties>
 
     <repositories>

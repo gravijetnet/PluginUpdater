@@ -91,25 +91,35 @@ public class VersionStore {
      */
     public synchronized void setVersion(String pluginName, String version) {
         versions.put(pluginName, version);
-        persist();
+        // Take a snapshot of the map while still holding the lock so the serialised
+        // content is consistent, then release the lock before doing any file I/O.
+        String snapshot = buildSnapshot();
+        // persist() is intentionally called outside the synchronized block: file I/O
+        // (write + atomic move) can be slow on NFS or when antivirus is scanning,
+        // and we must not hold the monitor while waiting for disk, or other threads
+        // calling setVersion/load would stall for the full I/O duration.
+        persistSnapshot(snapshot);
     }
 
     // ── Private ────────────────────────────────────────────────────────────
 
-    private void persist() {
-        Path file = dataFolder.resolve("versions.yml");
-        Path tmp  = file.resolveSibling("versions.yml.tmp");
-
+    /** Serialises the current in-memory map to a YAML string. Must be called under the lock. */
+    private String buildSnapshot() {
         StringBuilder sb = new StringBuilder(
             "# PluginUpdater version store — managed automatically, do not edit.\n");
-        // Copy the map entries under the existing synchronized lock so the iteration
-        // sees a consistent point-in-time snapshot even if load() is called concurrently.
         new java.util.HashMap<>(versions).forEach((name, ver) ->
             sb.append(quoteYaml(name)).append(": ").append(quoteYaml(ver)).append('\n')
         );
+        return sb.toString();
+    }
+
+    /** Writes {@code content} to versions.yml atomically. Safe to call without the lock. */
+    private void persistSnapshot(String content) {
+        Path file = dataFolder.resolve("versions.yml");
+        Path tmp  = file.resolveSibling("versions.yml.tmp");
 
         try {
-            Files.writeString(tmp, sb.toString(), StandardCharsets.UTF_8);
+            Files.writeString(tmp, content, StandardCharsets.UTF_8);
             try {
                 Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
             } catch (AtomicMoveNotSupportedException ignored) {

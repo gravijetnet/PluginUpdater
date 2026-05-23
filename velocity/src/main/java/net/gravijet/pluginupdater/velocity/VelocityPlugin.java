@@ -49,6 +49,8 @@ public class VelocityPlugin {
     private final java.util.logging.Logger coreLogger;
 
     private ShutdownHandler shutdownHandler;
+    /** True only after onEnable() has been called on the handler (i.e. fully initialised). */
+    private volatile boolean fullyInitialised = false;
 
     @Inject
     public VelocityPlugin(ProxyServer server, Logger logger,
@@ -113,13 +115,14 @@ public class VelocityPlugin {
 
         // Check and download updates immediately in the background.
         shutdownHandler.onEnable();
+        fullyInitialised = true;
 
         // Plugin enabled, no log to avoid spam
     }
 
     @Subscribe
     public void onProxyShutdown(ProxyShutdownEvent event) {
-        if (shutdownHandler != null) {
+        if (fullyInitialised && shutdownHandler != null) {
             // Handles clean proxy shutdowns.
             // The JVM shutdown hook handles forced kills.
             shutdownHandler.onDisable();

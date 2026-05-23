@@ -9,9 +9,8 @@ import net.gravijet.pluginupdater.core.model.UpdateInfo;
 import net.gravijet.pluginupdater.core.util.CC;
 import net.gravijet.pluginupdater.core.util.GlobMatcher;
 
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -139,6 +138,7 @@ public class ModrinthUpdateChecker {
         JsonElement verNumEl = version.get("version_number");
         if (idEl == null || idEl.isJsonNull()
                 || verNumEl == null || verNumEl.isJsonNull()
+                || !idEl.isJsonPrimitive() || !verNumEl.isJsonPrimitive()
                 || !version.has("files") || !version.get("files").isJsonArray()) {
             logger.warning(CC.c("&c[PluginUpdater] &7Malformed Modrinth version data for &f"
                 + CC.safe(entry.getName()) + "&7."));
@@ -228,23 +228,20 @@ public class ModrinthUpdateChecker {
     }
 
     private static String readBody(HttpURLConnection conn) throws IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder sb = new StringBuilder();
-            String line;
-            int totalChars = 0;
-            while ((line = reader.readLine()) != null) {
-                // readLine() strips the line terminator; add 2 to account for \r\n
-                // (worst case) so the limit is never exceeded by more than 1 byte per line.
-                totalChars += line.length() + 2;
-                if (totalChars > MAX_BODY_BYTES) {
+        try (InputStream raw = conn.getInputStream()) {
+            byte[] buf = new byte[8192];
+            int n;
+            int totalBytes = 0;
+            java.io.ByteArrayOutputStream chunk = new java.io.ByteArrayOutputStream(8192);
+            while ((n = raw.read(buf)) != -1) {
+                totalBytes += n;
+                if (totalBytes > MAX_BODY_BYTES) {
                     throw new IOException("API response body exceeded "
                         + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
                 }
-                sb.append(line);
-                sb.append('\n');
+                chunk.write(buf, 0, n);
             }
-            return sb.toString();
+            return chunk.toString(StandardCharsets.UTF_8);
         }
     }
 }

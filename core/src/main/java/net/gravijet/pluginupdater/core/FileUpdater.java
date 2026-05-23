@@ -126,7 +126,7 @@ public class FileUpdater {
 
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Download error for &e" + displayName
-                + "&7: " + e));
+                + "&7: " + e.getMessage()));
             return null;
         } finally {
             if (conn != null) conn.disconnect();
@@ -237,24 +237,23 @@ public class FileUpdater {
                 } catch (NumberFormatException ignored) {}
             }
         }
-        // IPv6 loopback (::1) and private ranges (fc00::/7, fe80::/10 link-local)
-        if (h.equals("::1") || h.startsWith("fe80:")
-                || h.startsWith("fc") || h.startsWith("fd")) {
-            return true;
-        }
         // IPv6 in brackets: [::1], [fe80::1%eth0].
-        // RFC 3986 allows exactly one bracket layer; recursing further would be malformed input
-        // that could trigger a StackOverflowError.  Unwrap exactly one layer here.
+        // RFC 3986 allows exactly one bracket layer; unwrap and check the inner address.
+        // Malformed bracket form (no closing ']') is treated as unsafe.
         if (h.startsWith("[")) {
             if (!h.endsWith("]")) return true; // malformed — treat as unsafe
-            String inner = h.substring(1, h.length() - 1);
-            // Re-check without recursion: only the plain IPv6 checks apply inside brackets.
-            String ih = inner.toLowerCase(Locale.ROOT);
-            return ih.equals("::1")
-                || ih.startsWith("fe80:")
-                || ih.startsWith("fc")
-                || ih.startsWith("fd");
+            h = h.substring(1, h.length() - 1).toLowerCase(Locale.ROOT);
         }
+        // Strip zone ID (e.g. fe80::1%eth0 → fe80::1) before comparison.
+        int zoneIdx = h.indexOf('%');
+        if (zoneIdx >= 0) h = h.substring(0, zoneIdx);
+        // Expand common compressed loopback forms before comparison.
+        // Full-form ::1 equivalents: "0:0:0:0:0:0:0:1" and "::1".
+        if (h.equals("::1") || h.equals("0:0:0:0:0:0:0:1")) return true;
+        // IPv4-mapped loopback: ::ffff:127.x.x.x
+        if (h.startsWith("::ffff:127.")) return true;
+        // Link-local (fe80::/10) and ULA (fc00::/7 covers fc and fd prefixes)
+        if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
         return false;
     }
 

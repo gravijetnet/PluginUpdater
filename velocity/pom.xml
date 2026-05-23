@@ -98,15 +98,33 @@
                                 </relocation>
                             </relocations>
                             <filters>
+                                <!-- Strip signing metadata and plugin descriptors from
+                                     shaded dependencies only, scoped per artifact so the
+                                     primary artifact's own resources are never touched. -->
                                 <filter>
-                                    <artifact>*:*</artifact>
+                                    <artifact>com.google.code.gson:gson</artifact>
                                     <excludes>
-                                        <exclude>META-INF/MANIFEST.MF</exclude>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>org.yaml:snakeyaml</artifact>
+                                    <excludes>
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
                                         <exclude>plugin.yml</exclude>
                                         <exclude>bungee.yml</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>net.gravijet.pluginupdater:core</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

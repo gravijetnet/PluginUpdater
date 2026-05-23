@@ -193,7 +193,8 @@ public class ShutdownHandler {
         // starts, so two worker threads never write to the same target JAR simultaneously.
         long drainDeadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
         while (!processingPlugins.isEmpty() && System.currentTimeMillis() < drainDeadline) {
-            try { Thread.sleep(50); } catch (InterruptedException e) { interrupted = true; break; }
+            java.util.concurrent.locks.LockSupport.parkNanos(10_000_000L); // 10 ms
+            if (Thread.interrupted()) { interrupted = true; break; }
         }
 
         if (interrupted) Thread.currentThread().interrupt();
@@ -215,14 +216,6 @@ public class ShutdownHandler {
             startupThread = worker; // publish reference before start so onDisable() cannot miss it
         }
         worker.start();
-        // Yield briefly so the scheduler can transition the thread to RUNNABLE before
-        // onDisable() could call join() on a still-NEW thread (which returns immediately,
-        // leaving the startup download unjoinable).
-        if ("startup".equals(label)) {
-            while (worker.getState() == Thread.State.NEW) {
-                Thread.yield();
-            }
-        }
     }
 
     /** Runs update checks synchronously on the current thread. */
@@ -241,7 +234,7 @@ public class ShutdownHandler {
             }
         }
 
-        // Update check complete, no log to avoid spam
+        logger.fine(CC.c("&7[PluginUpdater] " + label + " check complete (" + plugins.size() + " plugin(s) checked)."));
     }
 
     /**
@@ -405,10 +398,12 @@ public class ShutdownHandler {
                             bestMtime = mtime;
                             bestMatch = jar;
                         }
-                    } catch (IOException ignored) {
-                        // Cannot read mtime; only use this file as a last resort (i.e. keep
-                        // any previously found match that has a real mtime over this one).
-                        if (bestMatch == null || bestMtime == -1) bestMatch = jar;
+                    } catch (IOException e) {
+                        logger.warning(CC.c("&c[PluginUpdater] &7Cannot read last-modified time for &f"
+                            + jar.getFileName() + "&7: " + e.getMessage()
+                            + " &7— using as fallback only."));
+                        // Cannot read mtime; only use this file if no better candidate exists.
+                        if (bestMatch == null) bestMatch = jar;
                     }
                 }
             }
@@ -439,11 +434,13 @@ public class ShutdownHandler {
     private static String sanitizeFilename(String s) {
         // Remove forbidden filename characters and null bytes.
         String safe = s.replaceAll("[\0/\\\\:*?\"<>|]", "_");
-        // Collapse dot-only segments ("..") that survived slash removal to prevent
-        // path-traversal-looking names like ".._.._evil".
+        // Collapse runs of two or more dots to prevent path-traversal-looking names.
         safe = safe.replaceAll("\\.\\.+", "_");
+        // A result that is purely dots (e.g. a single ".") is also a traversal risk.
+        if (safe.matches("\\.+")) safe = "_";
         // Cap at 64 characters so name + "-" + version + ".jar" stays under 255 bytes.
         if (safe.length() > 64) safe = safe.substring(0, 64);
+        if (safe.isEmpty()) safe = "_";
         return safe;
     }
 }

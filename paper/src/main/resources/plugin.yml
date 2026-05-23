@@ -1,5 +1,6 @@
 name: PluginUpdater
 version: 1.0.0
 main: net.gravijet.pluginupdater.paper.PaperPlugin
+api-version: '1.13'
 description: Automatically updates plugins from GitHub releases on server shutdown.
 author: gravijet
