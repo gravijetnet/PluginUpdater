@@ -65,7 +65,7 @@ public final class CC {
         if (s == null) return "null";
         // Strip & and § prefixes from valid Minecraft color code sequences so that
         // user-supplied strings cannot inject color codes when embedded in a CC.c() call.
-        return s.replaceAll("[&§](?=[0-9a-fA-FklmnorKLMNOR])", "");
+        return s.replaceAll("[&§][0-9a-fA-FklmnorKLMNOR]", "");
     }
 
     private static String ansiFor(char code) {

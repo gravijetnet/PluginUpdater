@@ -59,7 +59,9 @@ public class PaperPlugin extends JavaPlugin {
         // Register this plugin's own JAR so self-updates replace the correct file.
         // JavaPlugin#getFile() is a protected method accessible from within this class.
         try {
-            Path selfJar = getFile().toPath().toAbsolutePath();
+            java.io.File file = getFile();
+            if (file == null) throw new IllegalStateException("getFile() returned null");
+            Path selfJar = file.toPath().toAbsolutePath();
             shutdownHandler.registerKnownJar("PluginUpdater", selfJar);
             // Self-JAR registered, no log to avoid spam
         } catch (Exception e) {

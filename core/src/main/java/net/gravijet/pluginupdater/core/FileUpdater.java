@@ -62,9 +62,21 @@ public class FileUpdater {
 
             int status = conn.getResponseCode();
             if (status != 200) {
+                // Do not log the full URL — after redirect-following it may be an S3
+                // pre-signed URL whose query parameters contain time-limited credentials.
                 logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
-                    + " &7failed with HTTP &e" + status
-                    + " &8(&7url: &f" + CC.safe(conn.getURL().toString()) + "&8)&7."));
+                    + " &7failed with HTTP &e" + status + "&7."));
+                return null;
+            }
+            // Reject responses that are clearly not a JAR binary. GitHub returns
+            // JSON metadata (Content-Type: application/json) when the auth token is wrong
+            // or the Accept header is not honoured. Writing JSON into a .jar file on disk
+            // produces a corrupt plugin that the server will fail to load.
+            String contentType = conn.getContentType();
+            if (contentType != null && contentType.toLowerCase(Locale.ROOT).contains("application/json")) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Download of &e" + displayName
+                    + " &7rejected: server returned JSON instead of a binary file."
+                    + " Check your access-token and asset-pattern in config.yml."));
                 return null;
             }
 
@@ -227,15 +239,17 @@ public class FileUpdater {
                 || h.startsWith("0.")) {     // 0.0.0.0/8
             return true;
         }
-        // 192.0.2.1/12 (172.16–172.31)
+        // 192.0.2.1/10 — RFC 6598 CGNAT shared address space (used by Kubernetes, ISPs)
+        if (h.startsWith("100.")) {
+            int second = parseOctet(h, 4);
+            if (second >= 64 && second <= 127) return true;
+        }
+        // 192.0.2.1/12 (172.16–172.31).
+        // Use parseOctet() rather than Integer.parseInt() so leading-zero octets like
+        // "172.016.x.x" (which the OS resolves as 172.16.x.x) are not silently passed.
         if (h.startsWith("172.")) {
-            String[] parts = h.split("\\.", 3);
-            if (parts.length >= 2) {
-                try {
-                    int second = Integer.parseInt(parts[1]);
-                    if (second >= 16 && second <= 31) return true;
-                } catch (NumberFormatException ignored) {}
-            }
+            int second = parseOctet(h, 4);
+            if (second >= 16 && second <= 31) return true;
         }
         // IPv6 in brackets: [::1], [fe80::1%eth0].
         // RFC 3986 allows exactly one bracket layer; unwrap and check the inner address.
@@ -255,6 +269,27 @@ public class FileUpdater {
         // Link-local (fe80::/10) and ULA (fc00::/7 covers fc and fd prefixes)
         if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
         return false;
+    }
+
+    /**
+     * Parses the decimal octet that starts at {@code offset} in {@code host} (dot-delimited).
+     * Returns -1 on any parse error (non-digit, leading zeros, empty, overflow) so callers
+     * can treat the result as "not in any known safe range" and block it conservatively.
+     * Leading zeros are rejected because the OS may interpret them as octal (e.g. "016" → 14).
+     */
+    private static int parseOctet(String host, int offset) {
+        int dot = host.indexOf('.', offset);
+        String raw = (dot == -1) ? host.substring(offset) : host.substring(offset, dot);
+        if (raw.isEmpty()) return -1;
+        if (raw.length() > 1 && raw.charAt(0) == '0') return -1; // leading zero — treat as unsafe
+        int val = 0;
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c < '0' || c > '9') return -1;
+            val = val * 10 + (c - '0');
+            if (val > 255) return -1;
+        }
+        return val;
     }
 
     // ── Network helpers ────────────────────────────────────────────────────

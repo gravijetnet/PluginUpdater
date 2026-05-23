@@ -33,16 +33,15 @@ public final class GlobMatcher {
     public static boolean matches(String glob, String filename) {
         Pattern p = PATTERN_CACHE.get(glob);
         if (p != null) return p.matcher(filename).matches();
-        Pattern compiled = toPattern(glob);
-        // Evict one arbitrary entry before inserting to enforce the size cap atomically.
-        // ConcurrentHashMap.size() is only an estimate under contention, so we check again
-        // inside the eviction path rather than relying on the pre-check alone.
+        // Evict one arbitrary entry when at capacity before inserting, so the map stays
+        // bounded. Iterator.next() removes exactly one key regardless of concurrent size
+        // estimates, avoiding the mass-eviction and cap-violation bugs in the old approach.
         if (PATTERN_CACHE.size() >= MAX_CACHE_SIZE) {
-            PATTERN_CACHE.keys().asIterator().forEachRemaining(k -> {
-                if (PATTERN_CACHE.size() >= MAX_CACHE_SIZE) PATTERN_CACHE.remove(k);
-            });
+            java.util.Iterator<String> it = PATTERN_CACHE.keySet().iterator();
+            if (it.hasNext()) { it.next(); it.remove(); }
         }
-        p = PATTERN_CACHE.computeIfAbsent(glob, k -> compiled);
+        // computeIfAbsent compiles lazily so concurrent misses don't waste a compilation.
+        p = PATTERN_CACHE.computeIfAbsent(glob, GlobMatcher::toPattern);
         return p.matcher(filename).matches();
     }
 

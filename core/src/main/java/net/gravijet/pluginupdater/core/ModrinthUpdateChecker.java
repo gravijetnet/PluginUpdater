@@ -155,9 +155,8 @@ public class ModrinthUpdateChecker {
         JsonArray files = version.get("files").getAsJsonArray();
 
         // Primary pass: find a file whose name matches the configured glob.
-        // The single-file fallback URL is collected during this same pass to avoid a
-        // redundant second iteration — it is only used when no glob match was found.
         String singleFileFallbackUrl = null;
+        String singleFileFallbackName = null;
         for (int f = 0; f < files.size(); f++) {
             JsonElement fileEl = files.get(f);
             if (!fileEl.isJsonObject()) continue;
@@ -174,13 +173,21 @@ public class ModrinthUpdateChecker {
                     entry.getName(), storedKey, versionNumber, versionId, url));
             }
 
-            // Capture fallback only when there is exactly one file and it is a JAR.
+            // Capture fallback: if there is exactly one JAR file and the glob didn't match,
+            // use it anyway — single-file releases don't need a precise pattern.
+            // Evaluated after the loop to ensure files.size() == 1 check is correct.
             if (files.size() == 1 && filename.toLowerCase().endsWith(".jar")) {
-                singleFileFallbackUrl = url;
+                singleFileFallbackUrl  = url;
+                singleFileFallbackName = filename;
             }
         }
 
         if (singleFileFallbackUrl != null) {
+            logger.warning(CC.c("&e[PluginUpdater] &7Asset pattern &e'"
+                + CC.safe(entry.getAssetPattern())
+                + "'&7 did not match &e'" + CC.safe(singleFileFallbackName)
+                + "'&7 for &f" + CC.safe(entry.getName())
+                + " &7— using it anyway (only one JAR in release). Update asset-pattern in config.yml to silence this."));
             return Optional.of(new UpdateInfo(
                 entry.getName(), storedKey, versionNumber, versionId, singleFileFallbackUrl));
         }
@@ -220,9 +227,11 @@ public class ModrinthUpdateChecker {
         conn.setConnectTimeout(10_000);
         conn.setReadTimeout(15_000);
         conn.setInstanceFollowRedirects(false); // prevent JVM from auto-following redirects without SSRF validation
-        // Modrinth token format: plain token, no "Bearer" prefix
+        // Modrinth API v2 expects the token directly, without a "Bearer" prefix.
+        // Strip it if the user accidentally copied a Bearer-prefixed value from another tool.
         if (token != null) {
-            conn.setRequestProperty("Authorization", token);
+            String normalized = token.startsWith("Bearer ") ? token.substring(7) : token;
+            conn.setRequestProperty("Authorization", normalized);
         }
         return conn;
     }

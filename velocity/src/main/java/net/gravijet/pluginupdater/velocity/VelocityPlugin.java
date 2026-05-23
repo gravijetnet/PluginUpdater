@@ -48,7 +48,7 @@ public class VelocityPlugin {
     /** java.util.logging adapter handed to the core module. */
     private final java.util.logging.Logger coreLogger;
 
-    private ShutdownHandler shutdownHandler;
+    private volatile ShutdownHandler shutdownHandler;
     /** True only after onEnable() has been called on the handler (i.e. fully initialised). */
     private volatile boolean fullyInitialised = false;
 
@@ -153,8 +153,11 @@ public class VelocityPlugin {
                 String raw = record.getMessage();
                 Object[] params = record.getParameters();
                 if (params != null && params.length > 0) {
-                    try { raw = java.text.MessageFormat.format(raw, params); }
-                    catch (Exception ignored) {}
+                    try {
+                        raw = java.text.MessageFormat.format(raw, params);
+                    } catch (java.text.ParseException | IllegalArgumentException e) {
+                        raw = raw + " [format error: " + e.getMessage() + "]";
+                    }
                 }
                 String    msg    = CC.strip(raw);
                 Level     lvl    = record.getLevel();

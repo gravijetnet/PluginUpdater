@@ -88,17 +88,14 @@ public class VersionStore {
     /**
      * Records {@code version} as the current installed version of {@code pluginName}
      * and immediately flushes the store to disk.
+     *
+     * <p>The snapshot is built and persisted inside the same {@code synchronized} block
+     * so that two concurrent successful downloads cannot produce an interleaved snapshot
+     * where one plugin's version record overwrites the other's on disk.
      */
     public synchronized void setVersion(String pluginName, String version) {
         versions.put(pluginName, version);
-        // Take a snapshot of the map while still holding the lock so the serialised
-        // content is consistent, then release the lock before doing any file I/O.
-        String snapshot = buildSnapshot();
-        // persist() is intentionally called outside the synchronized block: file I/O
-        // (write + atomic move) can be slow on NFS or when antivirus is scanning,
-        // and we must not hold the monitor while waiting for disk, or other threads
-        // calling setVersion/load would stall for the full I/O duration.
-        persistSnapshot(snapshot);
+        persistSnapshot(buildSnapshot());
     }
 
     // ── Private ────────────────────────────────────────────────────────────
@@ -107,7 +104,7 @@ public class VersionStore {
     private String buildSnapshot() {
         StringBuilder sb = new StringBuilder(
             "# PluginUpdater version store — managed automatically, do not edit.\n");
-        new java.util.HashMap<>(versions).forEach((name, ver) ->
+        versions.forEach((name, ver) ->
             sb.append(quoteYaml(name)).append(": ").append(quoteYaml(ver)).append('\n')
         );
         return sb.toString();
@@ -128,7 +125,12 @@ public class VersionStore {
         } catch (IOException e) {
             logger.severe(CC.c("&c[PluginUpdater] &7Failed to save versions.yml: " + e.getMessage()
                 + " &7— version keys are in memory only; plugins may be re-downloaded on next start."));
-            try { Files.deleteIfExists(tmp); } catch (IOException ignored) {}
+            try {
+                Files.deleteIfExists(tmp);
+            } catch (IOException e2) {
+                logger.warning(CC.c("&c[PluginUpdater] &7Could not clean up temp file &f" + tmp
+                    + "&7: " + e2.getMessage() + " &7— delete it manually if writes continue to fail."));
+            }
         }
     }
 
@@ -147,9 +149,9 @@ public class VersionStore {
                 case '\t' -> sb.append("\\t");
                 case '\0' -> sb.append("\\0");
                 default   -> {
-                    // Escape remaining C0 control characters (U+0001–U+001F) that are
-                    // illegal in YAML double-quoted scalars when emitted literally.
-                    if (c < 0x20) {
+                    // Escape C0 controls (U+0001–U+001F), DEL (U+007F), and C1 controls
+                    // (U+0080–U+009F) — all illegal in YAML double-quoted scalars when literal.
+                    if (c < 0x20 || c == 0x7F || (c >= 0x80 && c <= 0x9F)) {
                         sb.append(String.format("\\u%04X", (int) c));
                     } else {
                         sb.append(c);

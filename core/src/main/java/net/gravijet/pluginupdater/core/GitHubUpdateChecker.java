@@ -97,7 +97,7 @@ public class GitHubUpdateChecker {
                     + " &7for tag 'latest' of &f" + CC.safe(entry.getName()) + "&7."));
                 return Optional.empty();
             }
-        } catch (Exception e) {
+        } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Failed to fetch tag 'latest' for &f"
                 + CC.safe(entry.getName())
                 + "&7: " + e + " — falling back to latest release."));
@@ -193,7 +193,7 @@ public class GitHubUpdateChecker {
         // Primary pass: find the asset whose filename matches the configured glob.
         for (int i = 0; i < assets.size(); i++) {
             Optional<UpdateInfo> hit = parseAsset(assets.get(i), entry, storedKey, latestTag);
-            if (hit != null) return hit; // null = skip; empty = up-to-date; present = update found
+            if (hit != SKIP) return hit; // SKIP = no glob match; empty = up-to-date; present = update found
         }
 
         // Fallback: if pattern contains "latest", accept any JAR that starts with the plugin
@@ -214,7 +214,7 @@ public class GitHubUpdateChecker {
                      assetLower.startsWith(repoSuffix + "-") || assetLower.equals(repoSuffix + ".jar"))) {
                     // Use the name-prefix match already verified above; skip glob check.
                     Optional<UpdateInfo> hit = parseAssetNoGlob(el, entry, storedKey, latestTag);
-                    if (hit != null) return hit;
+                    if (hit != SKIP) return hit;
                 }
             }
             logger.warning(CC.c("&c[PluginUpdater] &7No fallback asset found for &f"
@@ -231,32 +231,42 @@ public class GitHubUpdateChecker {
     }
 
     /**
+     * Sentinel returned by {@link #parseAsset} / {@link #parseAssetNoGlob} to signal
+     * "this asset should be skipped" — distinct from {@link Optional#empty()} which means
+     * "asset matched but is already up to date". Using a sentinel avoids returning a
+     * literal {@code null} from an {@code Optional}-typed method, which would violate the
+     * implicit contract that {@code Optional} is never itself {@code null}.
+     */
+    private static final Optional<UpdateInfo> SKIP = Optional.empty();
+    /** Marker that distinguishes "skip this asset" from "asset matched, already up to date". */
+    private static final Optional<UpdateInfo> UP_TO_DATE = Optional.empty();
+
+    /**
      * Parses a single asset JSON element and returns:
      * <ul>
-     *   <li>{@code null}                — asset should be skipped (missing fields, non-object, no glob match)
-     *   <li>{@link Optional#empty()}    — asset matches and is already up to date
-     *   <li>{@code Optional.of(...)}    — asset matches and is newer
+     *   <li>{@link #SKIP} (via {@code == SKIP} identity check) — asset should be skipped
+     *   <li>{@link #UP_TO_DATE}                                — asset matches, already current
+     *   <li>{@code Optional.of(...)}                           — asset matches and is newer
      * </ul>
-     * This helper is used by both the primary and fallback loops to avoid duplicating
-     * asset-field parsing and {@code id} type-safety logic.
+     * Callers distinguish SKIP from UP_TO_DATE by reference identity ({@code result == SKIP}).
      */
     private Optional<UpdateInfo> parseAsset(JsonElement el, PluginEntry entry,
                                             String storedKey, String latestTag) {
-        if (!el.isJsonObject()) return null;
+        if (!el.isJsonObject()) return SKIP;
         JsonObject asset = el.getAsJsonObject();
         JsonElement nameEl      = asset.get("name");
         JsonElement idEl        = asset.get("id");
         JsonElement updatedAtEl = asset.get("updated_at");
         if (nameEl == null || nameEl.isJsonNull()
                 || idEl == null || idEl.isJsonNull()
-                || updatedAtEl == null || updatedAtEl.isJsonNull()) return null;
+                || updatedAtEl == null || updatedAtEl.isJsonNull()) return SKIP;
 
         // Guard against non-numeric id values (e.g. future API returning a string id).
-        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
-        if (!nameEl.isJsonPrimitive() || !updatedAtEl.isJsonPrimitive()) return null;
+        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return SKIP;
+        if (!nameEl.isJsonPrimitive() || !updatedAtEl.isJsonPrimitive()) return SKIP;
 
         String assetName = nameEl.getAsString();
-        if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) return null;
+        if (!GlobMatcher.matches(entry.getAssetPattern(), assetName)) return SKIP;
 
         long   assetId      = idEl.getAsLong();
         // Use the API asset endpoint — more reliable than browser_download_url for both
@@ -265,27 +275,27 @@ public class GitHubUpdateChecker {
         // updated_at changes whenever the asset is re-uploaded, even under the same tag.
         String assetUpdatedAt = updatedAtEl.getAsString();
 
-        if (assetUpdatedAt.equals(storedKey)) return Optional.empty();
+        if (assetUpdatedAt.equals(storedKey)) return UP_TO_DATE;
         return Optional.of(new UpdateInfo(entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
     }
 
     /** Like {@link #parseAsset} but skips the glob check — used by the name-prefix fallback loop. */
     private Optional<UpdateInfo> parseAssetNoGlob(JsonElement el, PluginEntry entry,
                                                    String storedKey, String latestTag) {
-        if (!el.isJsonObject()) return null;
+        if (!el.isJsonObject()) return SKIP;
         JsonObject asset = el.getAsJsonObject();
         JsonElement idEl        = asset.get("id");
         JsonElement updatedAtEl = asset.get("updated_at");
         if (idEl == null || idEl.isJsonNull()
-                || updatedAtEl == null || updatedAtEl.isJsonNull()) return null;
-        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return null;
-        if (!updatedAtEl.isJsonPrimitive()) return null;
+                || updatedAtEl == null || updatedAtEl.isJsonNull()) return SKIP;
+        if (!idEl.isJsonPrimitive() || !idEl.getAsJsonPrimitive().isNumber()) return SKIP;
+        if (!updatedAtEl.isJsonPrimitive()) return SKIP;
 
         long   assetId      = idEl.getAsLong();
         String downloadUrl  = API_BASE + entry.getRepo() + "/releases/assets/" + assetId;
         String assetUpdatedAt = updatedAtEl.getAsString();
 
-        if (assetUpdatedAt.equals(storedKey)) return Optional.empty();
+        if (assetUpdatedAt.equals(storedKey)) return UP_TO_DATE;
         return Optional.of(new UpdateInfo(entry.getName(), storedKey, latestTag, assetUpdatedAt, downloadUrl));
     }
 
@@ -298,7 +308,17 @@ public class GitHubUpdateChecker {
      * GitHub owner/repo names consist of alphanumerics, hyphens, underscores, and dots.
      */
     private static boolean isValidGitHubRepo(String repo) {
-        return repo != null && repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+");
+        // GitHub owner names: alphanumerics and hyphens only (no dots, no underscores).
+        // GitHub repo names: alphanumerics, hyphens, underscores, and dots are allowed,
+        // but dots at the start/end or consecutive dots (..) are not valid. Reject any
+        // sequence with ".." to prevent path-traversal-style URL manipulation.
+        if (repo == null) return false;
+        String[] parts = repo.split("/", -1);
+        if (parts.length != 2) return false;
+        String owner = parts[0], repoName = parts[1];
+        if (!owner.matches("[A-Za-z0-9][A-Za-z0-9-]*")) return false;
+        if (!repoName.matches("[A-Za-z0-9][A-Za-z0-9_.\\-]*") || repoName.contains("..")) return false;
+        return true;
     }
 
     private static HttpURLConnection openConnection(String url, String token) throws IOException {
@@ -326,17 +346,16 @@ public class GitHubUpdateChecker {
             byte[] buf = new byte[8192];
             int n;
             int totalBytes = 0;
-            StringBuilder sb = new StringBuilder();
-            java.io.ByteArrayOutputStream chunk = new java.io.ByteArrayOutputStream(8192);
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(8192);
             while ((n = raw.read(buf)) != -1) {
                 totalBytes += n;
                 if (totalBytes > MAX_BODY_BYTES) {
                     throw new IOException("API response body exceeded "
                         + (MAX_BODY_BYTES / 1024 / 1024) + " MB safety limit.");
                 }
-                chunk.write(buf, 0, n);
+                out.write(buf, 0, n);
             }
-            return chunk.toString(StandardCharsets.UTF_8);
+            return out.toString(StandardCharsets.UTF_8);
         }
     }
 }

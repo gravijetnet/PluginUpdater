@@ -142,7 +142,8 @@ public class ConfigManager {
                 try {
                     checkIntervalMinutes = Math.max(0, Integer.parseInt(interval.toString().trim()));
                 } catch (NumberFormatException e) {
-                    logger.warning(CC.c("&c[PluginUpdater] &7Invalid check-interval-minutes — using default (30)."));
+                    logger.warning(CC.c("&c[PluginUpdater] &7Invalid check-interval-minutes value '&e"
+                        + CC.safe(interval.toString().trim()) + "&7' — using default (30)."));
                 }
             }
         }

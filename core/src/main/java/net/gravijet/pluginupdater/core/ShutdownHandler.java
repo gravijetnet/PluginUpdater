@@ -283,9 +283,9 @@ public class ShutdownHandler {
             return; // startup worker or another check already processing this plugin
         }
         try {
-            String storedKey      = versions.getVersion(entry.getName());
-            Optional<Path> oldJar = findExistingJar(entry);
-            boolean jarPresent    = oldJar.isPresent();
+            String storedKey       = versions.getVersion(entry.getName());
+            List<Path> oldJars     = findExistingJars(entry);
+            boolean jarPresent     = !oldJars.isEmpty();
 
             if (!jarPresent) {
                 // Cases 3 & 4: JAR missing — always download
@@ -294,14 +294,14 @@ public class ShutdownHandler {
                         + " &7is missing — forcing re-download."));
                 }
                 Optional<UpdateInfo> opt = checkForUpdate(entry, null);
-                opt.ifPresent(u -> downloadAndReplace(entry, u, Optional.empty()));
+                opt.ifPresent(u -> downloadAndReplace(entry, u, java.util.Collections.emptyList()));
                 return;
             }
 
             // Cases 1 & 2: JAR present — compare against stored key
             // storedKey == null means we have never tracked this plugin; always download to sync.
             Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
-            opt.ifPresent(u -> downloadAndReplace(entry, u, oldJar));
+            opt.ifPresent(u -> downloadAndReplace(entry, u, oldJars));
         } finally {
             processingPlugins.remove(entry.getName());
         }
@@ -316,9 +316,9 @@ public class ShutdownHandler {
     }
 
     /** Downloads the update and atomically replaces the target JAR on disk. */
-    private void downloadAndReplace(PluginEntry entry, UpdateInfo update, Optional<Path> oldJar) {
-        String rawVer   = update.getNewVersion();
-        String safeVer  = sanitizeFilename(rawVer != null ? rawVer : "unknown");
+    private void downloadAndReplace(PluginEntry entry, UpdateInfo update, List<Path> oldJars) {
+        String rawVer   = update.getNewVersion() != null ? update.getNewVersion() : "unknown";
+        String safeVer  = sanitizeFilename(rawVer);
         String tempName = sanitizeFilename(entry.getName()) + "-" + safeVer + ".jar";
         String downloadToken = (entry.getSource() == PluginEntry.Source.MODRINTH)
             ? null : entry.getAccessToken();
@@ -330,8 +330,9 @@ public class ShutdownHandler {
         Path targetJar = resolveTargetJar(entry);
 
         if (fileUpdater.atomicReplace(tempFile, targetJar)) {
-            // Remove old JAR if it had a different name (e.g. old version in filename)
-            oldJar.ifPresent(old -> {
+            // Delete all old JARs that differ from the new target (covers duplicates like
+            // Lobby.jar + Lobby-latest.jar that cause "Ambiguous plugin name" errors).
+            for (Path old : oldJars) {
                 if (!old.equals(targetJar)) {
                     try {
                         Files.deleteIfExists(old);
@@ -341,12 +342,12 @@ public class ShutdownHandler {
                         old.toFile().deleteOnExit();
                     }
                 }
-            });
+            }
 
             versions.setVersion(entry.getName(), update.getStoreKey());
 
             logger.info(CC.c("&a[PluginUpdater] \u25cf &f" + CC.safe(entry.getName())
-                + " &7updated to &a" + CC.safe(rawVer != null ? rawVer : "unknown")
+                + " &7updated to &a" + CC.safe(rawVer)
                 + " &7(active on next start)"));
         } else {
             logger.warning(CC.c("&c[PluginUpdater] &7Could not install update for &f"
@@ -357,60 +358,56 @@ public class ShutdownHandler {
     }
 
     /**
-     * Finds the currently installed JAR for a plugin without needing the version string.
-     * Returns empty if the JAR cannot be found.
+     * Finds all installed JARs for a plugin (e.g. {@code Lobby.jar} and {@code Lobby-latest.jar}).
+     * Returns an empty list if none are found. The list is sorted newest-modified first so
+     * callers that only care about the primary JAR can take {@code get(0)}.
      */
-    private Optional<Path> findExistingJar(PluginEntry entry) {
+    private List<Path> findExistingJars(PluginEntry entry) {
         // 1. Known path (e.g. self-JAR registered at startup)
         Path known = knownJarPaths.get(entry.getName());
-        if (known != null && Files.exists(known)) return Optional.of(known);
+        if (known != null && Files.exists(known)) return java.util.Collections.singletonList(known);
 
-        // 2. Scan plugins folder — match "<name>.jar" or "<name>-<version>.jar" exactly
-        //    (a plain startsWith would match "ExamplePlugin" when looking for "Example")
-        //    When multiple matches exist (e.g. old locked JAR + new version on Windows),
-        //    return the most recently modified one to avoid using a stale copy.
+        // 2. Scan plugins folder — match "<name>.jar" or "<name>-<version/tag>.jar" exactly.
+        //    Collect ALL matches so duplicates (Lobby.jar + Lobby-latest.jar) are all removed.
         String nameLower = entry.getName().toLowerCase();
         String versionedPrefix = nameLower + "-";
-        Path bestMatch = null;
-        long bestMtime = -1;
+        java.util.List<Path> matches = new java.util.ArrayList<>();
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(pluginsFolder)) {
             for (Path jar : stream) {
                 String fname = jar.getFileName().toString().toLowerCase();
-                if (!fname.endsWith(".jar")) continue; // manual filter — case-insensitive on all OSes
-                boolean matched = false;
+                if (!fname.endsWith(".jar")) continue;
                 if (fname.equals(nameLower + ".jar")) {
-                    matched = true;
+                    matches.add(jar);
                 } else if (fname.startsWith(versionedPrefix)
                         && fname.length() > versionedPrefix.length()) {
-                    // Require the character after the dash to be a digit or 'v' so that
+                    // Require the char after the dash to be a digit or 'v' so that
                     // "essentialsx-chatcolor-1.0.jar" is not mistaken for "essentialsx".
-                    // The length guard prevents StringIndexOutOfBoundsException when the
-                    // filename is exactly "<name>-.jar" (prefix fills the name portion).
-                    char first = fname.charAt(versionedPrefix.length());
-                    if (Character.isDigit(first) || first == 'v') {
-                        matched = true;
-                    }
-                }
-                if (matched) {
-                    try {
-                        long mtime = Files.getLastModifiedTime(jar).toMillis();
-                        if (mtime > bestMtime) {
-                            bestMtime = mtime;
-                            bestMatch = jar;
-                        }
-                    } catch (IOException e) {
-                        logger.warning(CC.c("&c[PluginUpdater] &7Cannot read last-modified time for &f"
-                            + jar.getFileName() + "&7: " + e.getMessage()
-                            + " &7— using as fallback only."));
-                        // Cannot read mtime; only use this file if no better candidate exists.
-                        if (bestMatch == null) bestMatch = jar;
+                    // "latest" is matched by checking the full suffix word, not just 'l',
+                    // to avoid false-positives like "Plugin-lib.jar" or "Plugin-loader.jar".
+                    String suffix = fname.substring(versionedPrefix.length());
+                    char first = suffix.charAt(0);
+                    boolean isVersion = Character.isDigit(first) || first == 'v'
+                        || suffix.equals("latest.jar");
+                    if (isVersion) {
+                        matches.add(jar);
                     }
                 }
             }
         } catch (IOException e) {
             logger.warning(CC.c("&c[PluginUpdater] &7Plugins folder scan failed: " + e));
         }
-        return Optional.ofNullable(bestMatch);
+        // Read each file's mtime once, then sort newest-first — avoids O(N log N) syscalls
+        // from calling getLastModifiedTime inside the comparator on every comparison.
+        java.util.Map<Path, Long> mtimes = new java.util.HashMap<>();
+        for (Path jar : matches) {
+            try {
+                mtimes.put(jar, Files.getLastModifiedTime(jar).toMillis());
+            } catch (IOException e) {
+                mtimes.put(jar, 0L);
+            }
+        }
+        matches.sort((a, b) -> Long.compare(mtimes.getOrDefault(b, 0L), mtimes.getOrDefault(a, 0L)));
+        return matches;
     }
 
     /**
@@ -427,7 +424,7 @@ public class ShutdownHandler {
         Path known = knownJarPaths.get(entry.getName());
         if (known != null) return known;
 
-        // Use <ConfigName>.jar — stable name always matched by findExistingJar
+        // Use <ConfigName>.jar — stable name always matched by findExistingJars
         return pluginsFolder.resolve(sanitizeFilename(entry.getName()) + ".jar");
     }
 
@@ -439,8 +436,13 @@ public class ShutdownHandler {
         safe = safe.replaceAll("\\.\\.+", "_");
         // A result that is purely dots (e.g. a single ".") is also a traversal risk.
         if (safe.matches("\\.+")) safe = "_";
-        // Cap at 64 characters so name + "-" + version + ".jar" stays under 255 bytes.
-        if (safe.length() > 64) safe = safe.substring(0, 64);
+        // Cap at 64 UTF-16 code units. If position 64 falls inside a surrogate pair,
+        // step back one to avoid splitting it and producing an invalid Unicode string.
+        if (safe.length() > 64) {
+            int cut = 64;
+            if (Character.isHighSurrogate(safe.charAt(cut - 1))) cut--;
+            safe = safe.substring(0, cut);
+        }
         if (safe.isEmpty()) safe = "_";
         return safe;
     }
