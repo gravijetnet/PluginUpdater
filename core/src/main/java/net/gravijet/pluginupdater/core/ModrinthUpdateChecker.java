@@ -175,7 +175,6 @@ public class ModrinthUpdateChecker {
 
             // Capture fallback: if there is exactly one JAR file and the glob didn't match,
             // use it anyway — single-file releases don't need a precise pattern.
-            // Evaluated after the loop to ensure files.size() == 1 check is correct.
             if (files.size() == 1 && filename.toLowerCase().endsWith(".jar")) {
                 singleFileFallbackUrl  = url;
                 singleFileFallbackName = filename;
@@ -240,7 +239,7 @@ public class ModrinthUpdateChecker {
         try (InputStream raw = conn.getInputStream()) {
             byte[] buf = new byte[8192];
             int n;
-            int totalBytes = 0;
+            long totalBytes = 0;
             java.io.ByteArrayOutputStream chunk = new java.io.ByteArrayOutputStream(8192);
             while ((n = raw.read(buf)) != -1) {
                 totalBytes += n;

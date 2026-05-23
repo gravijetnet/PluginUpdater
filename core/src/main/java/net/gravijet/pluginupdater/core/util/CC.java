@@ -57,15 +57,19 @@ public final class CC {
     }
 
     /**
-     * Escapes user-supplied content so {@code &X} sequences in it are not interpreted
-     * as color codes when embedded inside a {@link #c} call. Removes the {@code &}
-     * from any {@code &X} pair where {@code X} is a valid Minecraft color code character.
+     * Sanitises user-supplied content so {@code &X} sequences in it are not interpreted
+     * as color codes when embedded inside a {@link #c} call. Removes the entire two-character
+     * {@code &X} sequence (both the {@code &} and the code character) for every {@code X}
+     * that is a valid Minecraft color/format code.
      */
+    private static final java.util.regex.Pattern COLOR_PREFIX =
+        java.util.regex.Pattern.compile("[&§][0-9a-fA-FklmnorKLMNOR]");
+
     public static String safe(String s) {
         if (s == null) return "null";
         // Strip & and § prefixes from valid Minecraft color code sequences so that
         // user-supplied strings cannot inject color codes when embedded in a CC.c() call.
-        return s.replaceAll("[&§][0-9a-fA-FklmnorKLMNOR]", "");
+        return COLOR_PREFIX.matcher(s).replaceAll("");
     }
 
     private static String ansiFor(char code) {

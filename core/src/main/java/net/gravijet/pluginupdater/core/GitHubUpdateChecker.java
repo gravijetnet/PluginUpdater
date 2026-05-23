@@ -232,13 +232,15 @@ public class GitHubUpdateChecker {
 
     /**
      * Sentinel returned by {@link #parseAsset} / {@link #parseAssetNoGlob} to signal
-     * "this asset should be skipped" — distinct from {@link Optional#empty()} which means
-     * "asset matched but is already up to date". Using a sentinel avoids returning a
-     * literal {@code null} from an {@code Optional}-typed method, which would violate the
-     * implicit contract that {@code Optional} is never itself {@code null}.
+     * "this asset should be skipped (glob did not match)". Callers detect this via
+     * {@code result == SKIP} identity. Must be a distinct object from every other
+     * return value — {@code Optional.of(SKIP_INFO)} gives a unique reference that
+     * can never equal any real {@code Optional.of(UpdateInfo)} because {@code SKIP_INFO}
+     * is a private sentinel not reachable outside this class.
      */
-    private static final Optional<UpdateInfo> SKIP = Optional.empty();
-    /** Marker that distinguishes "skip this asset" from "asset matched, already up to date". */
+    private static final UpdateInfo SKIP_SENTINEL = new UpdateInfo(null, null, null, null, null);
+    private static final Optional<UpdateInfo> SKIP = Optional.of(SKIP_SENTINEL);
+    /** Returned when an asset matches but is already up to date. */
     private static final Optional<UpdateInfo> UP_TO_DATE = Optional.empty();
 
     /**
@@ -316,8 +318,12 @@ public class GitHubUpdateChecker {
         String[] parts = repo.split("/", -1);
         if (parts.length != 2) return false;
         String owner = parts[0], repoName = parts[1];
-        if (!owner.matches("[A-Za-z0-9][A-Za-z0-9-]*")) return false;
+        // Owner: alphanumerics and hyphens; must not start or end with a hyphen.
+        if (!owner.matches("[A-Za-z0-9][A-Za-z0-9-]*") || owner.endsWith("-")) return false;
+        // Repo: alphanumerics, hyphens, underscores, and dots; must not start with a dot or
+        // hyphen, must not end with a dot, and must not contain consecutive dots.
         if (!repoName.matches("[A-Za-z0-9][A-Za-z0-9_.\\-]*") || repoName.contains("..")) return false;
+        if (repoName.endsWith(".")) return false;
         return true;
     }
 
@@ -345,7 +351,7 @@ public class GitHubUpdateChecker {
         try (InputStream raw = conn.getInputStream()) {
             byte[] buf = new byte[8192];
             int n;
-            int totalBytes = 0;
+            long totalBytes = 0;
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream(8192);
             while ((n = raw.read(buf)) != -1) {
                 totalBytes += n;

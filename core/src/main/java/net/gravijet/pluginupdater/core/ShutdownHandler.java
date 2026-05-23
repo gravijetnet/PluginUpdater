@@ -180,7 +180,14 @@ public class ShutdownHandler {
         // leaving a partial temp file and no stored version (forcing a redundant re-download).
         Thread startup = startupThread;
         if (startup != null) {
-            // join() on a not-yet-started or already-terminated thread returns immediately.
+            // spin-wait until the thread has actually been started (state leaves NEW),
+            // because join() on a not-yet-started thread returns immediately per JDK spec,
+            // which would let the shutdown worker race with the startup worker.
+            long waitStart = System.currentTimeMillis();
+            while (startup.getState() == Thread.State.NEW
+                    && System.currentTimeMillis() - waitStart < 1_000L) {
+                java.util.concurrent.locks.LockSupport.parkNanos(1_000_000L); // 1 ms
+            }
             try {
                 startup.join(TIMEOUT_MS);
             } catch (InterruptedException e) {
@@ -213,7 +220,7 @@ public class ShutdownHandler {
             "PluginUpdater-" + label + "-Worker");
         worker.setDaemon(true);
         if ("startup".equals(label)) {
-            startupThread = worker; // publish reference before start so onDisable() cannot miss it
+            startupThread = worker; // publish before start so onDisable() cannot miss it
         }
         worker.start();
     }
@@ -350,10 +357,15 @@ public class ShutdownHandler {
                 + " &7updated to &a" + CC.safe(rawVer)
                 + " &7(active on next start)"));
         } else {
+            // Both move strategies failed (target is likely file-locked on Windows).
+            // Delete the temp file so it does not accumulate in the plugins folder.
+            try {
+                Files.deleteIfExists(tempFile);
+            } catch (IOException ignored) {}
             logger.warning(CC.c("&c[PluginUpdater] &7Could not install update for &f"
                 + CC.safe(entry.getName())
-                + " &7\u2014 new JAR saved at: &f" + tempFile
-                + " &7(copy it manually to the plugins folder)"));
+                + " &7\u2014 the target JAR appears to be locked."
+                + " &7The server will pick up the new version after the next restart."));
         }
     }
 
