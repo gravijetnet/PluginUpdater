@@ -155,7 +155,7 @@ public class VelocityPlugin {
                 if (params != null && params.length > 0) {
                     try {
                         raw = java.text.MessageFormat.format(raw, params);
-                    } catch (java.text.ParseException | IllegalArgumentException e) {
+                    } catch (IllegalArgumentException e) {
                         raw = raw + " [format error: " + e.getMessage() + "]";
                     }
                 }
