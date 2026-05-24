@@ -18,9 +18,10 @@ import java.util.logging.Logger;
  * Handles the download and atomic file replacement for plugin updates.
  *
  * <p>Downloads use only {@link HttpURLConnection} — no third-party HTTP libraries.
- * GitHub release assets are accessed via the {@code browser_download_url} which
- * redirects through AWS S3; redirects are handled manually so the auth header is
- * only sent to {@code api.github.com} and not leaked to S3.
+ * GitHub release assets are accessed via the API asset endpoint
+ * ({@code /releases/assets/{id}}) which redirects through AWS S3; redirects are
+ * handled manually so the auth header is only sent to {@code api.github.com}
+ * and not leaked to S3.
  */
 public class FileUpdater {
 
@@ -242,14 +243,17 @@ public class FileUpdater {
         // 192.0.2.1/10 — RFC 6598 CGNAT shared address space (used by Kubernetes, ISPs)
         if (h.startsWith("100.")) {
             int second = parseOctet(h, 4);
-            if (second >= 64 && second <= 127) return true;
+            // second == -1 means malformed/leading-zero octet; block conservatively since
+            // the OS may interpret it as a value in the private range.
+            if (second == -1 || (second >= 64 && second <= 127)) return true;
         }
         // 192.0.2.1/12 (172.16–172.31).
         // Use parseOctet() rather than Integer.parseInt() so leading-zero octets like
         // "172.016.x.x" (which the OS resolves as 172.16.x.x) are not silently passed.
         if (h.startsWith("172.")) {
             int second = parseOctet(h, 4);
-            if (second >= 16 && second <= 31) return true;
+            // second == -1 means malformed/leading-zero octet; block conservatively.
+            if (second == -1 || (second >= 16 && second <= 31)) return true;
         }
         // IPv6 in brackets: [::1], [fe80::1%eth0].
         // RFC 3986 allows exactly one bracket layer; unwrap and check the inner address.
@@ -264,8 +268,11 @@ public class FileUpdater {
         // Expand common compressed loopback forms before comparison.
         // Full-form ::1 equivalents: "0:0:0:0:0:0:0:1" and "::1".
         if (h.equals("::1") || h.equals("0:0:0:0:0:0:0:1")) return true;
-        // IPv4-mapped loopback: ::ffff:127.x.x.x
-        if (h.startsWith("::ffff:127.")) return true;
+        // IPv4-mapped addresses (::ffff:x.x.x.x) — check the embedded IPv4 part.
+        if (h.startsWith("::ffff:")) {
+            String embedded = h.substring(7);
+            if (isPrivateHost(embedded)) return true;
+        }
         // Link-local (fe80::/10) and ULA (fc00::/7 covers fc and fd prefixes)
         if (h.startsWith("fe80:") || h.startsWith("fc") || h.startsWith("fd")) return true;
         return false;

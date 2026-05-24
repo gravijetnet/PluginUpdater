@@ -309,6 +309,26 @@ public class ShutdownHandler {
             // storedKey == null means we have never tracked this plugin; always download to sync.
             Optional<UpdateInfo> opt = checkForUpdate(entry, storedKey);
             opt.ifPresent(u -> downloadAndReplace(entry, u, oldJars));
+
+            // If no update was downloaded but multiple JARs exist (e.g. MoreFeatures.jar +
+            // MoreFeatures-latest.jar left over from a previously-failed delete), remove the
+            // non-canonical ones now so the next startup doesn't get an "Ambiguous plugin name" error.
+            if (!opt.isPresent() && oldJars.size() > 1) {
+                Path canonical = resolveTargetJar(entry);
+                for (Path old : oldJars) {
+                    if (!old.equals(canonical)) {
+                        try {
+                            Files.deleteIfExists(old);
+                            logger.info(CC.c("&a[PluginUpdater] &7Removed duplicate JAR &f"
+                                + old.getFileName() + "&7 for &f" + CC.safe(entry.getName())));
+                        } catch (IOException e) {
+                            logger.warning(CC.c("&c[PluginUpdater] &7Could not remove duplicate JAR &f"
+                                + old.getFileName() + "&7: " + e));
+                            old.toFile().deleteOnExit();
+                        }
+                    }
+                }
+            }
         } finally {
             processingPlugins.remove(entry.getName());
         }
