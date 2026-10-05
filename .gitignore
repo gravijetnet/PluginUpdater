@@ -62,3 +62,21 @@ build/
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+**/node_modules/
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+.claude/
+.codex/
+*.jks
+*.keystore
+key.properties
+google-services.json
+firebase-service-account.json
+auth_cache/
